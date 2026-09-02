@@ -1,0 +1,59 @@
+version: "2"
+linters:
+  default: none
+  enable:
+    - errcheck
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - revive
+    - staticcheck
+    - unused
+  settings:
+    gosec:
+      # G204 (subprocess with variable input): DockVista never shells out;
+      # this only fires on the Docker SDK's own HTTP client internals.
+      # G124 (cookie missing Secure): the session cookie's Secure flag is set
+      # conditionally on r.TLS != nil (sessionCookie in auth_handlers.go) so
+      # the app still works over plain HTTP on localhost, the default
+      # deployment; gosec's static check doesn't follow that condition.
+      # G705 (XSS via taint analysis): handleInspectContainer writes the
+      # daemon's raw inspect JSON through as-is; it's validated with
+      # json.Valid, served with an explicit application/json content type,
+      # and X-Content-Type-Options: nosniff — gosec's taint tracking flags
+      # the write regardless of those mitigations.
+      excludes:
+        - G204
+        - G124
+        - G705
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - web
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - web
+      - third_party$
+      - builtin$
+      - examples$

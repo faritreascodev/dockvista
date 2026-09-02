@@ -1,0 +1,26 @@
+# Go
+bin/
+*.test
+*.out
+
+# Frontend build output (embedded via go:embed; keep only the placeholder)
+internal/platform/embedweb/dist/*
+!internal/platform/embedweb/dist/index.html
+
+# Node
+web/node_modules/
+web/*.tsbuildinfo
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Env
+.env
+.env.local
+
+# Local runtime data — admin credentials + session signing key, never
+# committed (see internal/adapters/authstore).
+/data/
