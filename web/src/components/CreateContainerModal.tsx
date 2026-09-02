@@ -1,0 +1,221 @@
+import { useState } from "react";
+import { Plus, X } from "lucide-react";
+import { ApiError, createContainer, type CreateContainerPort } from "../api/client";
+import { useToast } from "./ui/Toast";
+import { Button } from "./ui/Button";
+import { Modal } from "./ui/Modal";
+
+interface CreateContainerModalProps {
+  onClose: () => void;
+  onCreated: () => void;
+}
+
+const inputClass =
+  "w-full rounded-lg border border-edge bg-panel-2 px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:opacity-60";
+
+export function CreateContainerModal({ onClose, onCreated }: CreateContainerModalProps) {
+  const [image, setImage] = useState("");
+  const [name, setName] = useState("");
+  const [restartPolicy, setRestartPolicy] = useState<"no" | "always" | "on-failure" | "unless-stopped">("no");
+  const [envLines, setEnvLines] = useState("");
+  const [ports, setPorts] = useState<CreateContainerPort[]>([]);
+  const [bindLines, setBindLines] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const toast = useToast();
+
+  const addPort = () => setPorts((prev) => [...prev, { hostPort: "", containerPort: "", protocol: "tcp" }]);
+  const updatePort = (i: number, patch: Partial<CreateContainerPort>) =>
+    setPorts((prev) => prev.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
+  const removePort = (i: number) => setPorts((prev) => prev.filter((_, idx) => idx !== i));
+
+  const handleCreate = async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const { id } = await createContainer({
+        image: image.trim(),
+        name: name.trim(),
+        restartPolicy,
+        env: envLines
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean),
+        binds: bindLines
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean),
+        ports: ports.filter((p) => p.hostPort && p.containerPort),
+      });
+      toast.push("success", `Created and started container ${id.slice(0, 12)}.`);
+      onCreated();
+      onClose();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to create container.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="New container"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={handleCreate} loading={busy} disabled={!image.trim()}>
+            Create &amp; start
+          </Button>
+        </>
+      }
+    >
+      <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+        <div>
+          <label className="mb-1 block text-xs font-medium text-ink-muted" htmlFor="cc-image">
+            Image
+          </label>
+          <input
+            id="cc-image"
+            type="text"
+            placeholder="nginx:latest"
+            value={image}
+            disabled={busy}
+            onChange={(e) => setImage(e.target.value)}
+            className={inputClass}
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-ink-muted" htmlFor="cc-name">
+              Name (optional)
+            </label>
+            <input
+              id="cc-name"
+              type="text"
+              placeholder="my-app"
+              value={name}
+              disabled={busy}
+              onChange={(e) => setName(e.target.value)}
+              className={inputClass}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-ink-muted" htmlFor="cc-restart">
+              Restart policy
+            </label>
+            <select
+              id="cc-restart"
+              value={restartPolicy}
+              disabled={busy}
+              onChange={(e) => setRestartPolicy(e.target.value as typeof restartPolicy)}
+              className={inputClass}
+            >
+              <option value="no">No</option>
+              <option value="always">Always</option>
+              <option value="on-failure">On failure</option>
+              <option value="unless-stopped">Unless stopped</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <div className="mb-1 flex items-center justify-between">
+            <label className="text-xs font-medium text-ink-muted">Port mappings</label>
+            <button
+              type="button"
+              onClick={addPort}
+              disabled={busy}
+              className="flex items-center gap-1 text-xs text-accent hover:opacity-80"
+            >
+              <Plus className="h-3 w-3" /> Add
+            </button>
+          </div>
+          <div className="space-y-2">
+            {ports.map((p, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="host"
+                  value={p.hostPort}
+                  disabled={busy}
+                  onChange={(e) => updatePort(i, { hostPort: e.target.value })}
+                  className={`${inputClass} w-20`}
+                />
+                <span className="text-ink-faint">:</span>
+                <input
+                  type="text"
+                  placeholder="container"
+                  value={p.containerPort}
+                  disabled={busy}
+                  onChange={(e) => updatePort(i, { containerPort: e.target.value })}
+                  className={`${inputClass} w-24`}
+                />
+                <select
+                  value={p.protocol}
+                  disabled={busy}
+                  onChange={(e) => updatePort(i, { protocol: e.target.value as "tcp" | "udp" })}
+                  className={`${inputClass} w-20`}
+                >
+                  <option value="tcp">tcp</option>
+                  <option value="udp">udp</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() => removePort(i)}
+                  disabled={busy}
+                  className="rounded p-1.5 text-ink-muted hover:text-rose-500"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+            {ports.length === 0 && <p className="text-xs text-ink-faint">No ports published.</p>}
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-ink-muted" htmlFor="cc-env">
+            Environment variables (one per line, KEY=value)
+          </label>
+          <textarea
+            id="cc-env"
+            rows={3}
+            value={envLines}
+            disabled={busy}
+            onChange={(e) => setEnvLines(e.target.value)}
+            placeholder="NODE_ENV=production"
+            className={`${inputClass} resize-none font-mono`}
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-ink-muted" htmlFor="cc-binds">
+            Volume binds (one per line, hostPath:containerPath[:ro])
+          </label>
+          <textarea
+            id="cc-binds"
+            rows={2}
+            value={bindLines}
+            disabled={busy}
+            onChange={(e) => setBindLines(e.target.value)}
+            placeholder="/host/data:/data"
+            className={`${inputClass} resize-none font-mono`}
+          />
+          <p className="mt-1 text-xs text-ink-faint">
+            No path restrictions are applied — this app already has full Docker socket access.
+          </p>
+        </div>
+
+        {error && (
+          <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+            {error}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
