@@ -1,0 +1,98 @@
+package httpapi
+
+import (
+	"bufio"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+type middleware func(http.Handler) http.Handler
+
+func chain(h http.Handler, mws ...middleware) http.Handler {
+	for i := len(mws) - 1; i >= 0; i-- {
+		h = mws[i](h)
+	}
+	return h
+}
+
+// recoverMiddleware turns a panic in any handler into a 500 response instead
+// of crashing the whole server — a single bad request must never take down
+// the process.
+func recoverMiddleware(log *slog.Logger) middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					log.Error("panic recovered", "panic", rec, "path", r.URL.Path)
+					writeError(w, http.StatusInternalServerError, "internal server error")
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(status int) {
+	r.status = status
+	r.ResponseWriter.WriteHeader(status)
+}
+
+// Flush lets streaming handlers (SSE) keep using http.Flusher through the
+// wrapped ResponseWriter.
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack lets the WebSocket handler (exec) take over the raw connection
+// through the wrapped ResponseWriter — without this, wrapping every request
+// in statusRecorder for logging silently breaks every Upgrade: websocket
+// request with a 501, since the library can no longer find a Hijacker.
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("underlying ResponseWriter does not support hijacking")
+	}
+	return hj.Hijack()
+}
+
+// Unwrap lets http.ResponseController (the mechanism newer stdlib-adjacent
+// code, including some WebSocket libraries, uses to reach through wrapper
+// ResponseWriters) find the real one directly.
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
+// loggingMiddleware logs one line per request with method, path, status and
+// latency, plus a per-request ID for correlating logs with client reports.
+func loggingMiddleware(log *slog.Logger) middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			reqID := uuid.NewString()
+			ctx := withRequestID(r.Context(), reqID)
+
+			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+			next.ServeHTTP(rec, r.WithContext(ctx))
+
+			log.Info("request",
+				"id", reqID,
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", rec.status,
+				"duration_ms", time.Since(start).Milliseconds(),
+			)
+		})
+	}
+}
