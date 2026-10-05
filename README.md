@@ -120,7 +120,8 @@ go build -o bin\dockvista.exe .\cmd\dockvista
 ```
 
 On Windows, Docker Compose (below) is the simplest route: it needs no Go or
-Node toolchain.
+Node toolchain. Which platforms have been run, and the `DOCKER_GID` setup for
+Linux, are in [docs/PLATFORMS.md](docs/PLATFORMS.md).
 
 Or with Docker Compose (Docker Desktop on Windows/macOS, or Linux):
 
