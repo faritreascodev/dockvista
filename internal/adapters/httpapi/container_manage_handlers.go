@@ -63,7 +63,7 @@ func (h *handlers) handleCreateContainer(w http.ResponseWriter, r *http.Request)
 		})
 	}
 
-	id, err := h.svc.Create(r.Context(), domain.ContainerSpec{
+	id, started, err := h.svc.Create(r.Context(), domain.ContainerSpec{
 		Image:         req.Image,
 		Name:          req.Name,
 		Env:           req.Env,
@@ -72,10 +72,19 @@ func (h *handlers) handleCreateContainer(w http.ResponseWriter, r *http.Request)
 		RestartPolicy: req.RestartPolicy,
 	})
 	if err != nil {
+		if id != "" {
+			httpjson.Write(w, http.StatusBadGateway, createContainerResult{
+				Status:  "created",
+				ID:      id,
+				Started: false,
+				Error:   "container was created but did not start",
+			})
+			return
+		}
 		writeServiceError(w, err)
 		return
 	}
-	httpjson.Write(w, http.StatusCreated, actionResultDTO{Status: "ok", ID: id})
+	httpjson.Write(w, http.StatusCreated, createContainerResult{Status: "ok", ID: id, Started: started})
 }
 
 func (h *handlers) handleRemoveContainer(w http.ResponseWriter, r *http.Request) {

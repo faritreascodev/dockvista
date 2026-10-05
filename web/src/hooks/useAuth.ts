@@ -34,8 +34,8 @@ export function useAuth() {
   }, [refresh]);
 
   const setup = useCallback(
-    async (username: string, password: string) => {
-      await setupAdmin(username, password);
+    async (username: string, password: string, setupToken = "") => {
+      await setupAdmin(username, password, setupToken);
       await refresh();
     },
     [refresh],

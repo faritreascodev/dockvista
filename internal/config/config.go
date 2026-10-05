@@ -5,6 +5,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"time"
 )
 
@@ -23,6 +24,12 @@ type Config struct {
 	// DataDir is where the admin credentials and session signing key are
 	// persisted, so login survives a process restart.
 	DataDir string
+	// SetupToken, when set, is the token required by POST /api/auth/setup.
+	// Empty means the process generates one and logs it once.
+	SetupToken string
+	// CookieSecure marks the session cookie Secure even when this process
+	// itself is plain HTTP because TLS terminates at a proxy in front.
+	CookieSecure bool
 }
 
 // Load reads configuration from the environment, falling back to defaults
@@ -33,6 +40,8 @@ func Load() Config {
 		PollInterval:    envDurationOr("DOCKVISTA_POLL_INTERVAL", 30*time.Second),
 		ShutdownTimeout: envDurationOr("DOCKVISTA_SHUTDOWN_TIMEOUT", 10*time.Second),
 		DataDir:         envOr("DOCKVISTA_DATA_DIR", "./data"),
+		SetupToken:      os.Getenv("DOCKVISTA_SETUP_TOKEN"),
+		CookieSecure:    envBool("DOCKVISTA_COOKIE_SECURE"),
 	}
 }
 
@@ -41,6 +50,15 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 func envDurationOr(key string, fallback time.Duration) time.Duration {

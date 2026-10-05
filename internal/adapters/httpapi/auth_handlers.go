@@ -20,18 +20,21 @@ var usernamePattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]{3,32}$`)
 // containerService).
 type authService interface {
 	IsInitialized() (bool, error)
-	Setup(username, password string) error
+	Setup(username, password, setupToken string) error
 	Login(username, password string) (token string, expiresAt time.Time, err error)
 	VerifySession(token string) (username string, err error)
+	RevokeSessions() error
 }
 
 type authHandlers struct {
-	svc authService
+	svc          authService
+	cookieSecure bool
 }
 
 type credentialsRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	SetupToken string `json:"setupToken"`
 }
 
 func (h *authHandlers) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -58,7 +61,11 @@ func (h *authHandlers) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Setup(req.Username, req.Password); err != nil {
+	if err := h.svc.Setup(req.Username, req.Password, req.SetupToken); err != nil {
+		if errors.Is(err, domain.ErrUnauthorized) {
+			writeError(w, http.StatusUnauthorized, "invalid setup token")
+			return
+		}
 		if errors.Is(err, domain.ErrAlreadyInitialized) {
 			writeError(w, http.StatusConflict, "an admin account already exists")
 			return
@@ -86,12 +93,16 @@ func (h *authHandlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	http.SetCookie(w, sessionCookie(token, expiresAt, r))
+	http.SetCookie(w, sessionCookie(token, expiresAt, r, h.cookieSecure))
 	httpjson.Write(w, http.StatusOK, map[string]string{"username": req.Username})
 }
 
 func (h *authHandlers) handleLogout(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, sessionCookie("", time.Unix(0, 0), r))
+	if err := h.svc.RevokeSessions(); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not revoke session")
+		return
+	}
+	http.SetCookie(w, sessionCookie("", time.Unix(0, 0), r, h.cookieSecure))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -100,14 +111,14 @@ func (h *authHandlers) handleMe(w http.ResponseWriter, r *http.Request) {
 	httpjson.Write(w, http.StatusOK, map[string]string{"username": username})
 }
 
-func sessionCookie(token string, expiresAt time.Time, r *http.Request) *http.Cookie {
+func sessionCookie(token string, expiresAt time.Time, r *http.Request, secure bool) *http.Cookie {
 	return &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    token,
 		Path:     "/",
 		Expires:  expiresAt,
 		HttpOnly: true,
-		Secure:   r.TLS != nil,
+		Secure:   secure || r.TLS != nil,
 		SameSite: http.SameSiteStrictMode,
 	}
 }

@@ -5,12 +5,13 @@ import { useTheme } from "../hooks/useTheme";
 
 interface AuthScreenProps {
   mode: "setup" | "login";
-  onSubmit: (username: string, password: string) => Promise<void>;
+  onSubmit: (username: string, password: string, setupToken?: string) => Promise<void>;
 }
 
 export function AuthScreen({ mode, onSubmit }: AuthScreenProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [setupToken, setSetupToken] = useState("");
   const [error, setError] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
   const { theme, toggle } = useTheme();
@@ -20,7 +21,7 @@ export function AuthScreen({ mode, onSubmit }: AuthScreenProps) {
     setError(undefined);
     setSubmitting(true);
     try {
-      await onSubmit(username, password);
+      await onSubmit(username, password, mode === "setup" ? setupToken : undefined);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong. Try again.");
     } finally {
@@ -50,6 +51,23 @@ export function AuthScreen({ mode, onSubmit }: AuthScreenProps) {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {mode === "setup" && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-ink-muted" htmlFor="setup-token">
+                Setup token
+              </label>
+              <input
+                id="setup-token"
+                type="text"
+                autoComplete="off"
+                required
+                value={setupToken}
+                onChange={(e) => setSetupToken(e.target.value)}
+                className="w-full rounded-lg border border-edge bg-panel-2 px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+              />
+              <p className="mt-1 text-xs text-ink-faint">Printed once in the server log on first launch.</p>
+            </div>
+          )}
           <div>
             <label className="mb-1 block text-xs font-medium text-ink-muted" htmlFor="username">
               Username

@@ -9,6 +9,9 @@ import "errors"
 type User struct {
 	Username     string
 	PasswordHash string
+	// SessionGeneration is mixed into every session token. Logout increments
+	// it, which invalidates every token already issued for this account.
+	SessionGeneration uint64
 }
 
 var (

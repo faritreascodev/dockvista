@@ -14,6 +14,8 @@ import (
 // engine. internal/adapters/docker implements this against the real SDK;
 // tests can implement it with a fake.
 type DockerClient interface {
+	// Ping reports daemon reachability and version. It must not list
+	// containers — the service fills the count from its own cache.
 	Ping(ctx context.Context) (domain.EngineInfo, error)
 	ListContainers(ctx context.Context) ([]domain.Container, error)
 	ContainerStats(ctx context.Context, id string) (domain.Stats, error)
@@ -26,6 +28,10 @@ type DockerClient interface {
 	// The caller owns the returned ReadCloser and must Close it; the
 	// implementation must stop producing data promptly once ctx is done.
 	StreamLogs(ctx context.Context, id string, tail string) (io.ReadCloser, error)
+	// LogsMultiplexed reports whether StreamLogs returns Docker's 8-byte
+	// framed stdout/stderr stream. A TTY container emits a raw byte stream
+	// instead, and framing that corrupts the log.
+	LogsMultiplexed(ctx context.Context, id string) (bool, error)
 	// Events subscribes to the daemon's own event feed. Both channels close
 	// once ctx is cancelled or the underlying connection ends.
 	Events(ctx context.Context) (<-chan domain.Event, <-chan error)
@@ -38,7 +44,10 @@ type DockerClient interface {
 	AttachExec(ctx context.Context, execID string) (io.ReadWriteCloser, error)
 	ResizeExec(ctx context.Context, execID string, rows, cols uint) error
 
-	CreateContainer(ctx context.Context, spec domain.ContainerSpec) (id string, err error)
+	// CreateContainer creates the container and tries to start it.
+	// When create succeeds and start fails, id is the new container and
+	// started is false — the caller must not drop that id.
+	CreateContainer(ctx context.Context, spec domain.ContainerSpec) (id string, started bool, err error)
 	RemoveContainer(ctx context.Context, id string, force bool) error
 	// InspectContainer returns the daemon's raw JSON for the container,
 	// passed straight through to the frontend's Inspect tab.

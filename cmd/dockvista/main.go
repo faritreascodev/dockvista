@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -58,11 +60,23 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	initialized, err := credStore.IsInitialized()
+	if err != nil {
+		return err
+	}
+	setupToken := cfg.SetupToken
+	if !initialized && setupToken == "" {
+		setupToken, err = newSetupToken()
+		if err != nil {
+			return err
+		}
+		log.Warn("admin account is not created yet; this setup token is required once", "token", setupToken)
+	}
 	sessionSecret, err := authstore.LoadOrCreateSessionSecret(cfg.DataDir)
 	if err != nil {
 		return err
 	}
-	authSvc := service.NewAuthService(credStore, sessionSecret)
+	authSvc := service.NewAuthService(credStore, sessionSecret, setupToken)
 	imageSvc := service.NewImageService(dockerClient)
 	volumeSvc := service.NewVolumeService(dockerClient)
 	networkSvc := service.NewNetworkService(dockerClient)
@@ -72,7 +86,7 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	router := httpapi.NewRouter(svc, authSvc, eventBroker, imageSvc, volumeSvc, networkSvc, staticHandler, log)
+	router := httpapi.NewRouter(svc, authSvc, eventBroker, imageSvc, volumeSvc, networkSvc, staticHandler, log, cfg.CookieSecure)
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           router,
@@ -117,14 +131,71 @@ func run(log *slog.Logger) error {
 // Reconnects on a short fixed delay if the stream drops — a daemon restart
 // shouldn't permanently degrade the app back to poll-only.
 func bridgeDockerEvents(ctx context.Context, docker *dockeradapter.Client, svc *service.ContainerService, b *broker.Broker[domain.Event], log *slog.Logger) {
+	signal := newRefreshSignal()
+	go runCoalescedRefresh(ctx, svc, signal, log)
+
 	for ctx.Err() == nil {
-		runEventStream(ctx, docker, svc, b, log)
+		runEventStream(ctx, docker, signal, b, log)
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+// refreshSignal is a coalescing doorbell. Nudge never blocks the caller and
+// never queues more than one pending refresh.
+type refreshSignal struct {
+	ch chan struct{}
+}
+
+func newRefreshSignal() *refreshSignal {
+	return &refreshSignal{ch: make(chan struct{}, 1)}
+}
+
+func (s *refreshSignal) Nudge() {
+	select {
+	case s.ch <- struct{}{}:
+	default:
+	}
+}
+
+// runCoalescedRefresh turns a burst of daemon events into one container
+// list. The event reader only publishes and nudges; it does not call the
+// daemon itself.
+func runCoalescedRefresh(ctx context.Context, svc *service.ContainerService, signal *refreshSignal, log *slog.Logger) {
+	const debounce = 200 * time.Millisecond
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-signal.ch:
+			timer := time.NewTimer(debounce)
+		drain:
+			for {
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return
+				case <-signal.ch:
+				case <-timer.C:
+					break drain
+				}
+			}
+			if err := svc.RefreshOnce(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("event-triggered container refresh failed", "error", err)
+			}
+		}
+	}
+}
+
+func newSetupToken() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
 
 // containerListActions are the container-event actions that actually change
@@ -147,7 +218,7 @@ func isHealthStatusAction(action string) bool {
 	return strings.HasPrefix(action, "health_status")
 }
 
-func runEventStream(ctx context.Context, docker *dockeradapter.Client, svc *service.ContainerService, b *broker.Broker[domain.Event], log *slog.Logger) {
+func runEventStream(ctx context.Context, docker *dockeradapter.Client, signal *refreshSignal, b *broker.Broker[domain.Event], log *slog.Logger) {
 	events, errs := docker.Events(ctx)
 	for {
 		select {
@@ -159,9 +230,7 @@ func runEventStream(ctx context.Context, docker *dockeradapter.Client, svc *serv
 			}
 			b.Publish(evt)
 			if evt.Type == "container" && (containerListActions[evt.Action] || isHealthStatusAction(evt.Action)) {
-				if err := svc.RefreshOnce(ctx); err != nil {
-					log.Warn("event-triggered container refresh failed", "error", err)
-				}
+				signal.Nudge()
 			}
 		case err, ok := <-errs:
 			if ok && err != nil {

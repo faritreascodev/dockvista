@@ -40,12 +40,37 @@ func (rl *rateLimiter) allow(key string) bool {
 			kept = append(kept, t)
 		}
 	}
+	if len(kept) == 0 {
+		delete(rl.visitors, key)
+	}
 	if len(kept) >= rl.limit {
 		rl.visitors[key] = kept
+		rl.sweep(cutoff)
 		return false
 	}
 	rl.visitors[key] = append(kept, now)
+	rl.sweep(cutoff)
 	return true
+}
+
+// sweep drops keys whose window has expired once the map is large enough
+// that a scan is cheaper than unbounded growth from one-off client addresses.
+func (rl *rateLimiter) sweep(cutoff time.Time) {
+	if len(rl.visitors) < 256 {
+		return
+	}
+	for key, hits := range rl.visitors {
+		live := false
+		for _, t := range hits {
+			if t.After(cutoff) {
+				live = true
+				break
+			}
+		}
+		if !live {
+			delete(rl.visitors, key)
+		}
+	}
 }
 
 func clientKey(r *http.Request) string {

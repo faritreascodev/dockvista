@@ -38,13 +38,13 @@ func toPortBindings(ports []domain.PortBinding) (nat.PortSet, nat.PortMap, error
 // already has full Docker socket access, which is host-root-equivalent
 // regardless of what validation happens here (see README's security
 // section for the full reasoning).
-func (c *Client) CreateContainer(ctx context.Context, spec domain.ContainerSpec) (string, error) {
+func (c *Client) CreateContainer(ctx context.Context, spec domain.ContainerSpec) (string, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, defaultCallTimeout)
 	defer cancel()
 
 	exposedPorts, portBindings, err := toPortBindings(spec.Ports)
 	if err != nil {
-		return "", fmt.Errorf("docker: %w: %w", domain.ErrInvalidInput, err)
+		return "", false, fmt.Errorf("docker: %w: %w", domain.ErrInvalidInput, err)
 	}
 
 	resp, err := c.sdk.ContainerCreate(ctx,
@@ -61,13 +61,13 @@ func (c *Client) CreateContainer(ctx context.Context, spec domain.ContainerSpec)
 		nil, nil, spec.Name,
 	)
 	if err != nil {
-		return "", wrapErr("create container", err)
+		return "", false, wrapErr("create container", err)
 	}
 
 	if err := c.sdk.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return resp.ID, wrapErr("start created container", err)
+		return resp.ID, false, wrapErr("start created container", err)
 	}
-	return resp.ID, nil
+	return resp.ID, true, nil
 }
 
 func (c *Client) RemoveContainer(ctx context.Context, id string, force bool) error {

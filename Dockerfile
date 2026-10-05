@@ -9,7 +9,7 @@ COPY web/ ./
 RUN npm run build
 
 # ---- backend build ----------------------------------------------------------
-FROM golang:1.25-alpine AS go-build
+FROM golang:1.26-alpine AS go-build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -30,10 +30,12 @@ EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/dockvista"]
 
 # Run with the host's Docker socket mounted and a named volume for /data so
-# the admin account survives a container recreate. The image runs as a
-# non-root user, which by default gets "permission denied" against a socket
-# owned by the host's docker group — pass that group's GID explicitly
-# instead of loosening the socket's permissions:
+# the admin account survives a container recreate. The socket mount is how
+# the process talks to the daemon; marking it :ro does not reduce what the
+# Docker API can do. The image runs as a non-root user, which by default
+# gets "permission denied" against a socket owned by the host's docker
+# group — pass that group's GID explicitly instead of loosening the
+# socket's permissions:
 #   docker run -p 8080:8080 \
 #     --group-add "$(stat -c '%g' /var/run/docker.sock)" \
 #     -v /var/run/docker.sock:/var/run/docker.sock:ro \

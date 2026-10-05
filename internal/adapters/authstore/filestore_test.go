@@ -95,3 +95,28 @@ func TestLoadOrCreateSessionSecret_StableAcrossCalls(t *testing.T) {
 		t.Fatal("expected the same secret to be reloaded, not regenerated")
 	}
 }
+
+func TestFileStore_BumpSessionGenerationPersists(t *testing.T) {
+	dir := t.TempDir()
+	store, err := authstore.New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := store.CreateAdmin(domain.User{Username: "admin", PasswordHash: "hashed", SessionGeneration: 1}); err != nil {
+		t.Fatalf("CreateAdmin: %v", err)
+	}
+
+	next, err := store.BumpSessionGeneration()
+	if err != nil || next != 2 {
+		t.Fatalf("BumpSessionGeneration = %d, %v", next, err)
+	}
+
+	reloaded, err := authstore.New(dir)
+	if err != nil {
+		t.Fatalf("New (reloaded): %v", err)
+	}
+	user, ok, err := reloaded.GetUser("admin")
+	if err != nil || !ok || user.SessionGeneration != 2 {
+		t.Fatalf("persisted generation: ok=%v err=%v user=%+v", ok, err, user)
+	}
+}

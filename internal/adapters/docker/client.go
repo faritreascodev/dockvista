@@ -66,17 +66,9 @@ func (c *Client) Ping(ctx context.Context) (domain.EngineInfo, error) {
 		return domain.EngineInfo{Reachable: false}, wrapErr("ping engine", err)
 	}
 
-	containers, err := c.sdk.ContainerList(ctx, container.ListOptions{All: true})
-	if err != nil {
-		// Engine is reachable but listing failed; report reachable with 0 count
-		// rather than failing the whole health check.
-		return domain.EngineInfo{Version: pong.APIVersion, Reachable: true}, nil
-	}
-
 	return domain.EngineInfo{
-		Version:    pong.APIVersion,
-		Reachable:  true,
-		Containers: len(containers),
+		Version:   pong.APIVersion,
+		Reachable: true,
 	}, nil
 }
 
@@ -191,6 +183,20 @@ func (c *Client) StreamLogs(ctx context.Context, id string, tail string) (io.Rea
 		return nil, wrapErr("stream container logs", err)
 	}
 	return out, nil
+}
+
+// LogsMultiplexed reports whether this container's log stream is framed.
+// TTY containers write a raw PTY stream; stdcopy on that stream drops bytes.
+func (c *Client) LogsMultiplexed(ctx context.Context, id string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultCallTimeout)
+	defer cancel()
+
+	info, err := c.sdk.ContainerInspect(ctx, id)
+	if err != nil {
+		return false, wrapErr("inspect container logs", err)
+	}
+	tty := info.Config != nil && info.Config.Tty
+	return !tty, nil
 }
 
 // wrapErr classifies a raw SDK error against domain sentinels so the HTTP

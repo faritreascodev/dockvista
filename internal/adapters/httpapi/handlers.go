@@ -25,19 +25,21 @@ type containerService interface {
 	Unpause(ctx context.Context, id string) error
 	Restart(ctx context.Context, id string) error
 	StreamLogs(ctx context.Context, id, tail string) (io.ReadCloser, error)
+	LogsMultiplexed(ctx context.Context, id string) (bool, error)
 	RefreshOnce(ctx context.Context) error
 	CreateExec(ctx context.Context, id string) (string, error)
 	AttachExec(ctx context.Context, execID string) (io.ReadWriteCloser, error)
 	ResizeExec(ctx context.Context, execID string, rows, cols uint) error
-	Create(ctx context.Context, spec domain.ContainerSpec) (string, error)
+	Create(ctx context.Context, spec domain.ContainerSpec) (id string, started bool, err error)
 	Remove(ctx context.Context, id string, force bool) error
 	Inspect(ctx context.Context, id string) ([]byte, error)
 }
 
 type handlers struct {
-	svc    containerService
-	events eventSubscriber
-	log    *slog.Logger
+	svc     containerService
+	events  eventSubscriber
+	log     *slog.Logger
+	streams *streamGate
 }
 
 func (h *handlers) handleEngine(w http.ResponseWriter, r *http.Request) {

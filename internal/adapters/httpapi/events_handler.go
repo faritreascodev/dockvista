@@ -19,6 +19,12 @@ type eventSubscriber interface {
 // broker subscription per connected tab. Same flush-per-message pattern as
 // handleContainerLogs.
 func (h *handlers) handleEvents(w http.ResponseWriter, r *http.Request) {
+	release := h.acquireStream(w)
+	if release == nil {
+		return
+	}
+	defer release()
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "streaming not supported")

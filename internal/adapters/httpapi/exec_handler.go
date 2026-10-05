@@ -26,6 +26,11 @@ func (h *handlers) handleExec(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid container id")
 		return
 	}
+	release := h.acquireStream(w)
+	if release == nil {
+		return
+	}
+	defer release()
 
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {

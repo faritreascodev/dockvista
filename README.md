@@ -1,7 +1,7 @@
 # DockVista
 
 [![CI](https://github.com/faritreascodev/dockvista/actions/workflows/ci.yml/badge.svg)](https://github.com/faritreascodev/dockvista/actions/workflows/ci.yml)
-![Go Version](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go)
+![Go Version](https://img.shields.io/badge/go-1.26%2B-00ADD8?logo=go)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A self-contained Docker dashboard — Containers, Images, Volumes, Networks and
@@ -24,8 +24,9 @@ a React/TypeScript frontend, shipped as a single binary.
 - **Real-time, not polling** — a background goroutine subscribes to the
   Docker daemon's own event stream and fans it out over SSE; the UI refetches
   within about a second of a real change (`docker stop` from another
-  terminal, a health check flipping, etc.) instead of waiting on a timer.
-  Interval polling only exists as a safety net in case an event is missed.
+  terminal, a health check flipping, etc.). A burst of events becomes one
+  container-list call, not one call per event. Interval polling only exists
+  as a safety net in case an event is missed.
 - **Real CPU% / memory metrics** — computed with the same delta formula
   `docker stats` uses, via the Docker SDK's one-shot stats API.
 - **Login required** — first launch walks you through creating a single
@@ -86,9 +87,12 @@ only knows about small `ports.*Client` interfaces, which `internal/adapters/*`
 implement. This is what makes the service layer testable with fakes (see
 `internal/core/service/*_test.go`) instead of a running Docker daemon.
 
+The request path, auth, and event bridge are written up in
+[docs/SYSTEM.md](docs/SYSTEM.md).
+
 ## Quickstart
 
-**Prerequisites:** Go 1.25+, Node 20+, and access to a Docker daemon (local
+**Prerequisites:** Go 1.26+, Node 20+, and access to a Docker daemon (local
 socket or `DOCKER_HOST`). No native/WebKit dependencies — this ships as a
 browser-based web app, not a desktop shell.
 
@@ -116,9 +120,11 @@ docker run -p 8080:8080 \
 ```
 
 **First launch:** open the app in your browser — there's no default account.
-You'll land on a "Create admin account" screen; whatever username/password
-you set there becomes the only login for that instance. See
-[Security](#security) for what that does and doesn't mean.
+The server log prints a one-time setup token (unless you set
+`DOCKVISTA_SETUP_TOKEN`). You'll land on a "Create admin account" screen;
+the token plus the username and password you choose become the only login
+for that instance. See [Security](#security) for what that does and doesn't
+mean.
 
 ### Configuration
 
@@ -130,25 +136,25 @@ All configuration is environment-based (see `internal/config/config.go`):
 | `DOCKVISTA_POLL_INTERVAL`      | `30s`   | Background container-list refresh — a safety net; the event stream drives the real-time updates |
 | `DOCKVISTA_SHUTDOWN_TIMEOUT`   | `10s`   | Graceful shutdown drain timeout                            |
 | `DOCKVISTA_DATA_DIR`           | `./data`| Where the admin account and session signing key are stored |
+| `DOCKVISTA_SETUP_TOKEN`        | (generated) | Token required by `POST /api/auth/setup` on first launch. If unset, the process generates one and logs it once. |
+| `DOCKVISTA_COOKIE_SECURE`      | `false` | Set to `true` when TLS terminates at a proxy in front of DockVista, so the session cookie is marked `Secure`. |
 
 ## Security
 
 - **No default credentials, anywhere.** The admin account is created
-  interactively on first launch (`POST /api/auth/setup`, only reachable once)
-  and stored bcrypt-hashed in `<DOCKVISTA_DATA_DIR>/credentials.json`
-  (`0600`, never committed — `data/` is gitignored). Every install gets its
-  own account.
+  interactively on first launch (`POST /api/auth/setup`). That endpoint
+  accepts exactly one successful call, and only with the setup token logged
+  at startup (or supplied via `DOCKVISTA_SETUP_TOKEN`). The password is
+  stored bcrypt-hashed in `<DOCKVISTA_DATA_DIR>/credentials.json`
+  (`0600` on Unix; Windows does not honor that mode). `data/` is gitignored.
 - **Single-user, by design — this is not a multi-tenant tool.** There is one
   admin account per running instance, no roles, no per-user permissions.
   It's built for "each person runs their own instance against their own
-  Docker daemon." If you need several people to share one running instance
-  with individually attributable logins, that's not supported yet — treat
-  the current model as one shared login for that case, or run separate
-  instances instead.
-  Sessions are stateless, HMAC-signed cookies (`SameSite=Strict`,
-  `HttpOnly`), so login survives a restart as long as `DOCKVISTA_DATA_DIR`
-  persists (the Docker run example above mounts a named volume for exactly
-  this reason).
+  Docker daemon." Sessions are HMAC-signed cookies (`SameSite=Strict`,
+  `HttpOnly`) that carry a generation counter. Logout increments that
+  counter, so a copied cookie stops working. Login survives a restart as
+  long as `DOCKVISTA_DATA_DIR` persists. Set `DOCKVISTA_COOKIE_SECURE=true`
+  when a reverse proxy terminates TLS; the process itself does not.
 - **No CORS, on purpose.** The API and the built frontend are always served
   from the same origin (in dev, Vite's proxy makes it so too), so there's no
   legitimate cross-origin caller and nothing to allow-list.
@@ -157,12 +163,13 @@ All configuration is environment-based (see `internal/config/config.go`):
   created with (bind mounts, environment, etc.) or which container the
   terminal can exec into. This mirrors Portainer and Docker Desktop's own
   trust model: anyone who can reach the Docker socket already has
-  host-root-equivalent control, so restricting what DockVista's own forms
-  allow wouldn't add real security — only the login wall does.
-- Rate limiting, strict input validation (container/image/volume/network
-  identifiers, ports, restart policies), and a security audit trail are in
-  `internal/adapters/httpapi/ratelimit.go` and `validate.go` if you want the
-  specifics.
+  host-root-equivalent control. Mounting the socket read-only does not
+  change that — `:ro` stops the file from being replaced, not API calls
+  through it.
+- Rate limiting and identifier checks live in
+  `internal/adapters/httpapi/ratelimit.go` and `validate.go`. Mutating
+  requests are logged with method, path, and status. There is no separate
+  audit-trail store.
 
 ## Development
 

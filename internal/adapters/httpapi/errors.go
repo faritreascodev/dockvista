@@ -18,7 +18,7 @@ func writeError(w http.ResponseWriter, status int, message string) {
 func writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
-		writeError(w, http.StatusNotFound, "container not found")
+		writeError(w, http.StatusNotFound, "resource not found")
 	case errors.Is(err, domain.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, "invalid input")
 	case errors.Is(err, domain.ErrEngineTimeout):

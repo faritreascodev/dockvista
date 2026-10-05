@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,8 +21,15 @@ type fakeDocker struct {
 	containers  []domain.Container
 	stats       domain.Stats
 	statsErr    error
+	statsCalls  atomic.Int32
+	listCalls   atomic.Int32
+	listGate    chan struct{}
+	listEntered chan struct{}
+	listOnce    sync.Once
 	actionCalls map[string]int
 	actionErr   error
+	createID    string
+	createErr   error
 }
 
 func newFakeDocker() *fakeDocker {
@@ -32,10 +41,18 @@ func (f *fakeDocker) Ping(ctx context.Context) (domain.EngineInfo, error) {
 }
 
 func (f *fakeDocker) ListContainers(ctx context.Context) ([]domain.Container, error) {
+	f.listCalls.Add(1)
+	if f.listEntered != nil {
+		f.listOnce.Do(func() { close(f.listEntered) })
+	}
+	if f.listGate != nil {
+		<-f.listGate
+	}
 	return f.containers, nil
 }
 
 func (f *fakeDocker) ContainerStats(ctx context.Context, id string) (domain.Stats, error) {
+	f.statsCalls.Add(1)
 	return f.stats, f.statsErr
 }
 
@@ -68,6 +85,10 @@ func (f *fakeDocker) StreamLogs(ctx context.Context, id, tail string) (io.ReadCl
 	return io.NopCloser(strings.NewReader("log line\n")), nil
 }
 
+func (f *fakeDocker) LogsMultiplexed(ctx context.Context, id string) (bool, error) {
+	return true, nil
+}
+
 func (f *fakeDocker) CreateExec(ctx context.Context, containerID string) (string, error) {
 	return "exec1", nil
 }
@@ -80,8 +101,15 @@ func (f *fakeDocker) ResizeExec(ctx context.Context, execID string, rows, cols u
 	return nil
 }
 
-func (f *fakeDocker) CreateContainer(ctx context.Context, spec domain.ContainerSpec) (string, error) {
-	return "new-container-id", nil
+func (f *fakeDocker) CreateContainer(ctx context.Context, spec domain.ContainerSpec) (string, bool, error) {
+	if f.createErr != nil {
+		id := f.createID
+		if id == "" {
+			id = "new-container-id"
+		}
+		return id, false, f.createErr
+	}
+	return "new-container-id", true, nil
 }
 
 func (f *fakeDocker) RemoveContainer(ctx context.Context, id string, force bool) error {
@@ -180,5 +208,76 @@ func TestRunCollector_StopsOnContextCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("RunCollector did not stop after context cancellation")
+	}
+}
+
+func TestRefreshOnce_CollapsesConcurrentLists(t *testing.T) {
+	fake := newFakeDocker()
+	fake.containers = []domain.Container{{ID: "abc123abc123", Name: "web"}}
+	fake.listEntered = make(chan struct{})
+	fake.listGate = make(chan struct{})
+
+	svc := service.New(fake, store.New(), nil)
+	ctx := context.Background()
+
+	errCh := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		go func() {
+			errCh <- svc.RefreshOnce(ctx)
+		}()
+	}
+
+	select {
+	case <-fake.listEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("list never started")
+	}
+	// Let the other callers join the in-flight list before releasing it.
+	time.Sleep(100 * time.Millisecond)
+	close(fake.listGate)
+
+	for i := 0; i < 8; i++ {
+		if err := <-errCh; err != nil {
+			t.Fatalf("RefreshOnce: %v", err)
+		}
+	}
+	if got := fake.listCalls.Load(); got != 1 {
+		t.Fatalf("expected 1 daemon list for 8 callers, got %d", got)
+	}
+	if got := svc.ListContainers(); len(got) != 1 || got[0].Name != "web" {
+		t.Fatalf("cache = %+v", got)
+	}
+}
+
+func TestCreate_StartFailureKeepsIDAndRefreshes(t *testing.T) {
+	fake := newFakeDocker()
+	fake.createID = "created-but-stopped"
+	fake.createErr = errors.New("start failed")
+	fake.containers = []domain.Container{{ID: "created-but-stopped", Name: "orphan"}}
+
+	svc := service.New(fake, store.New(), nil)
+	id, started, err := svc.Create(context.Background(), domain.ContainerSpec{Image: "nginx"})
+	if err == nil || started || id != "created-but-stopped" {
+		t.Fatalf("id=%q started=%v err=%v", id, started, err)
+	}
+	if got := svc.ListContainers(); len(got) != 1 {
+		t.Fatalf("expected the created container in cache, got %d", len(got))
+	}
+}
+
+func TestStats_ReusesSampleInsideTTL(t *testing.T) {
+	fake := newFakeDocker()
+	fake.stats = domain.Stats{ContainerID: "abc", CPUPercent: 1}
+	svc := service.New(fake, store.New(), nil)
+	ctx := context.Background()
+
+	if _, err := svc.Stats(ctx, "abc"); err != nil {
+		t.Fatalf("first Stats: %v", err)
+	}
+	if _, err := svc.Stats(ctx, "abc"); err != nil {
+		t.Fatalf("second Stats: %v", err)
+	}
+	if got := fake.statsCalls.Load(); got != 1 {
+		t.Fatalf("expected 1 daemon stats call, got %d", got)
 	}
 }

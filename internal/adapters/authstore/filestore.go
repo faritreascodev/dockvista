@@ -70,6 +70,10 @@ func (s *FileStore) CreateAdmin(user domain.User) error {
 		return domain.ErrAlreadyInitialized
 	}
 
+	return s.write(user)
+}
+
+func (s *FileStore) write(user domain.User) error {
 	data, err := json.Marshal(user)
 	if err != nil {
 		return fmt.Errorf("authstore: encode credentials: %w", err)
@@ -85,6 +89,26 @@ func (s *FileStore) CreateAdmin(user domain.User) error {
 		return fmt.Errorf("authstore: commit credentials: %w", err)
 	}
 	return nil
+}
+
+// BumpSessionGeneration increments the stored generation and persists it.
+// Every session token signed with the previous value stops verifying.
+func (s *FileStore) BumpSessionGeneration() (uint64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok, err := s.read()
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, domain.ErrUnauthorized
+	}
+	user.SessionGeneration++
+	if err := s.write(user); err != nil {
+		return 0, err
+	}
+	return user.SessionGeneration, nil
 }
 
 func (s *FileStore) GetUser(username string) (domain.User, bool, error) {

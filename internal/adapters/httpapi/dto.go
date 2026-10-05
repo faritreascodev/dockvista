@@ -84,6 +84,13 @@ type actionResultDTO struct {
 	ID     string `json:"id"`
 }
 
+type createContainerResult struct {
+	Status  string `json:"status"`
+	ID      string `json:"id"`
+	Started bool   `json:"started"`
+	Error   string `json:"error,omitempty"`
+}
+
 type imageDTO struct {
 	ID          string            `json:"id"`
 	RepoTags    []string          `json:"repoTags"`

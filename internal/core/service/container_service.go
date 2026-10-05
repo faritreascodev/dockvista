@@ -9,11 +9,18 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 	"time"
 
 	"dockvista/internal/core/domain"
 	"dockvista/internal/core/ports"
 )
+
+// statsCacheTTL collapses repeated samples for the same container. The UI
+// polls every few seconds per row; identical in-flight calls share one
+// daemon request via statsFlight, and a hit inside the window does not
+// call the daemon again.
+const statsCacheTTL = time.Second
 
 // ContainerService is the use-case layer for container inspection and
 // lifecycle control.
@@ -21,6 +28,17 @@ type ContainerService struct {
 	docker ports.DockerClient
 	store  ports.ContainerStore
 	log    *slog.Logger
+
+	listFlight  flight
+	statsFlight flight
+
+	statsMu    sync.Mutex
+	statsCache map[string]cachedStats
+}
+
+type cachedStats struct {
+	stats domain.Stats
+	until time.Time
 }
 
 // New builds a ContainerService. logger may be nil, in which case a no-op
@@ -29,7 +47,12 @@ func New(docker ports.DockerClient, store ports.ContainerStore, logger *slog.Log
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &ContainerService{docker: docker, store: store, log: logger}
+	return &ContainerService{
+		docker:     docker,
+		store:      store,
+		log:        logger,
+		statsCache: map[string]cachedStats{},
+	}
 }
 
 // Engine reports Docker daemon reachability and version.
@@ -38,6 +61,9 @@ func (s *ContainerService) Engine(ctx context.Context) (domain.EngineInfo, error
 	if err != nil {
 		return domain.EngineInfo{}, fmt.Errorf("service: engine status: %w", err)
 	}
+	// The count comes from the cache. Ping used to list every container
+	// just to measure len, which is a full daemon read on a health check.
+	info.Containers = len(s.store.List())
 	return info, nil
 }
 
@@ -61,11 +87,38 @@ func (s *ContainerService) GetContainer(id string) (domain.Container, error) {
 // ListContainers this always hits the daemon, since CPU/memory usage is
 // only meaningful in near-real-time.
 func (s *ContainerService) Stats(ctx context.Context, id string) (domain.Stats, error) {
-	stats, err := s.docker.ContainerStats(ctx, id)
+	if stats, ok := s.cachedStats(id); ok {
+		return stats, nil
+	}
+
+	v, err := s.statsFlight.Do(id, func() (any, error) {
+		if stats, ok := s.cachedStats(id); ok {
+			return stats, nil
+		}
+		stats, err := s.docker.ContainerStats(ctx, id)
+		if err != nil {
+			return domain.Stats{}, err
+		}
+		s.statsMu.Lock()
+		s.statsCache[id] = cachedStats{stats: stats, until: time.Now().Add(statsCacheTTL)}
+		s.statsMu.Unlock()
+		return stats, nil
+	})
 	if err != nil {
 		return domain.Stats{}, fmt.Errorf("service: container stats: %w", err)
 	}
+	stats, _ := v.(domain.Stats)
 	return stats, nil
+}
+
+func (s *ContainerService) cachedStats(id string) (domain.Stats, bool) {
+	s.statsMu.Lock()
+	defer s.statsMu.Unlock()
+	entry, ok := s.statsCache[id]
+	if !ok || time.Now().After(entry.until) {
+		return domain.Stats{}, false
+	}
+	return entry.stats, true
 }
 
 func (s *ContainerService) Start(ctx context.Context, id string) error {
@@ -112,6 +165,16 @@ func (s *ContainerService) StreamLogs(ctx context.Context, id, tail string) (io.
 	return r, nil
 }
 
+// LogsMultiplexed reports whether the log stream is Docker's framed
+// stdout/stderr multiplex. False means a raw TTY stream.
+func (s *ContainerService) LogsMultiplexed(ctx context.Context, id string) (bool, error) {
+	multiplexed, err := s.docker.LogsMultiplexed(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("service: log mode: %w", err)
+	}
+	return multiplexed, nil
+}
+
 func (s *ContainerService) CreateExec(ctx context.Context, id string) (string, error) {
 	execID, err := s.docker.CreateExec(ctx, id)
 	if err != nil {
@@ -130,15 +193,19 @@ func (s *ContainerService) AttachExec(ctx context.Context, execID string) (io.Re
 
 // Create makes a new container and immediately refreshes the cache so it
 // shows up without waiting for the next poll or daemon event.
-func (s *ContainerService) Create(ctx context.Context, spec domain.ContainerSpec) (string, error) {
-	id, err := s.docker.CreateContainer(ctx, spec)
+func (s *ContainerService) Create(ctx context.Context, spec domain.ContainerSpec) (string, bool, error) {
+	id, started, err := s.docker.CreateContainer(ctx, spec)
+	// Refresh whenever the daemon actually created a container, including
+	// the case where start failed and the caller still needs the id.
+	if id != "" {
+		if refreshErr := s.RefreshOnce(ctx); refreshErr != nil {
+			s.log.Warn("post-create cache refresh failed", "error", refreshErr)
+		}
+	}
 	if err != nil {
-		return "", fmt.Errorf("service: create container: %w", err)
+		return id, started, fmt.Errorf("service: create container: %w", err)
 	}
-	if refreshErr := s.RefreshOnce(ctx); refreshErr != nil {
-		s.log.Warn("post-create cache refresh failed", "error", refreshErr)
-	}
-	return id, nil
+	return id, true, nil
 }
 
 func (s *ContainerService) Remove(ctx context.Context, id string, force bool) error {
@@ -167,15 +234,26 @@ func (s *ContainerService) ResizeExec(ctx context.Context, execID string, rows, 
 }
 
 // RefreshOnce fetches the current container list from Docker and updates
-// the cache. It's exported so handlers can force an immediate refresh right
-// after a lifecycle action, instead of waiting for the next poll tick.
+// the cache. Concurrent callers share one in-flight list: a burst of daemon
+// events must not become a burst of ContainerList calls.
 func (s *ContainerService) RefreshOnce(ctx context.Context) error {
-	containers, err := s.docker.ListContainers(ctx)
-	if err != nil {
-		return fmt.Errorf("service: refresh containers: %w", err)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	s.store.Replace(containers)
-	return nil
+	_, err := s.listFlight.Do("containers", func() (any, error) {
+		// Detach from the caller's context. The first caller is often an
+		// HTTP request; cancelling that must not fail the shared refresh
+		// everyone else is waiting on.
+		cctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		containers, err := s.docker.ListContainers(cctx)
+		if err != nil {
+			return nil, fmt.Errorf("service: refresh containers: %w", err)
+		}
+		s.store.Replace(containers)
+		return nil, nil
+	})
+	return err
 }
 
 // RunCollector polls the Docker daemon on a fixed interval and keeps the

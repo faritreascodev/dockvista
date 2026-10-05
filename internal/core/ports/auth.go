@@ -8,4 +8,6 @@ type CredentialStore interface {
 	IsInitialized() (bool, error)
 	CreateAdmin(user domain.User) error
 	GetUser(username string) (domain.User, bool, error)
+	// BumpSessionGeneration invalidates every outstanding session token.
+	BumpSessionGeneration() (uint64, error)
 }

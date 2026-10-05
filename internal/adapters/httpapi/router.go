@@ -28,12 +28,13 @@ func NewRouter(
 	networks networkService,
 	staticHandler http.Handler,
 	log *slog.Logger,
+	cookieSecure bool,
 ) http.Handler {
 	if log == nil {
 		log = slog.Default()
 	}
-	h := &handlers{svc: svc, events: events, log: log}
-	ah := &authHandlers{svc: auth}
+	h := &handlers{svc: svc, events: events, log: log, streams: newStreamGate(32)}
+	ah := &authHandlers{svc: auth, cookieSecure: cookieSecure}
 	ih := &imageHandlers{svc: images, log: log}
 	vh := &volumeHandlers{svc: volumes}
 	nh := &networkHandlers{svc: networks}
@@ -44,6 +45,7 @@ func NewRouter(
 	// Login gets its own, much stricter limiter — this is the one endpoint a
 	// brute-force script would actually hammer.
 	loginLimited := rateLimitMiddleware(newRateLimiter(5, time.Minute))
+	setupLimited := rateLimitMiddleware(newRateLimiter(5, time.Minute))
 
 	protected := http.NewServeMux()
 	protected.HandleFunc("GET /api/auth/me", ah.handleMe)
@@ -83,7 +85,7 @@ func NewRouter(
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/auth/status", ah.handleStatus)
-	mux.HandleFunc("POST /api/auth/setup", ah.handleSetup)
+	mux.Handle("POST /api/auth/setup", setupLimited(http.HandlerFunc(ah.handleSetup)))
 	mux.Handle("POST /api/auth/login", loginLimited(http.HandlerFunc(ah.handleLogin)))
 	mux.Handle("/api/", requireAuth(auth)(protected))
 
@@ -96,5 +98,5 @@ func NewRouter(
 		mux.Handle("/", staticHandler)
 	}
 
-	return chain(mux, recoverMiddleware(log), loggingMiddleware(log))
+	return chain(mux, securityHeaders, recoverMiddleware(log), loggingMiddleware(log))
 }

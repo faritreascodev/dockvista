@@ -36,6 +36,13 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./cmd/... ./internal/... ./pkg/...
       - run: go test ./cmd/... ./internal/... ./pkg/... -race -cover
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Vulnerability scan
+        # Two Moby findings (GO-2026-4887, GO-2026-4883) have no upstream fix
+        # yet. The scan still runs so the report is visible; it does not fail
+        # the job until those are patched in github.com/docker/docker.
+        continue-on-error: true
+        run: govulncheck ./cmd/... ./internal/... ./pkg/...
 
   frontend:
     name: Lint & typecheck (frontend)

@@ -13,6 +13,19 @@ import (
 
 type middleware func(http.Handler) http.Handler
 
+// securityHeaders sets the headers that apply to both the API and the
+// embedded UI. CSP stays off: the production bundle and xterm rely on
+// inline style attributes, and a strict policy needs a pass against the
+// built assets before it can ship.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
+}
+
 func chain(h http.Handler, mws ...middleware) http.Handler {
 	for i := len(mws) - 1; i >= 0; i-- {
 		h = mws[i](h)

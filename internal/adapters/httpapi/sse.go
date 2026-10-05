@@ -30,6 +30,11 @@ func (h *handlers) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid container id")
 		return
 	}
+	release := h.acquireStream(w)
+	if release == nil {
+		return
+	}
+	defer release()
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -48,6 +53,12 @@ func (h *handlers) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
+	multiplexed, err := h.svc.LogsMultiplexed(ctx, id)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
 	stream, err := h.svc.StreamLogs(ctx, id, tail)
 	if err != nil {
 		writeServiceError(w, err)
@@ -62,7 +73,11 @@ func (h *handlers) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	lines := make(chan domain.LogLine, 64)
-	go demuxLogs(ctx, stream, lines)
+	if multiplexed {
+		go demuxLogs(ctx, stream, lines)
+	} else {
+		go scanRaw(ctx, stream, lines)
+	}
 
 	for {
 		select {
@@ -80,6 +95,21 @@ func (h *handlers) handleContainerLogs(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			flusher.Flush()
+		}
+	}
+}
+
+// scanRaw reads a TTY log stream, which is not framed, as plain stdout lines.
+func scanRaw(ctx context.Context, r io.Reader, out chan<- domain.LogLine) {
+	defer close(out)
+
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		select {
+		case out <- domain.LogLine{Stream: "stdout", Message: scanner.Text()}:
+		case <-ctx.Done():
+			return
 		}
 	}
 }
