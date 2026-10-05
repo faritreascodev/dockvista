@@ -281,3 +281,28 @@ func TestStats_ReusesSampleInsideTTL(t *testing.T) {
 		t.Fatalf("expected 1 daemon stats call, got %d", got)
 	}
 }
+
+// ctxAwareStatsDocker fails the stats call when the context it receives is
+// already done, which is what a real daemon client does.
+type ctxAwareStatsDocker struct {
+	*fakeDocker
+}
+
+func (f ctxAwareStatsDocker) ContainerStats(ctx context.Context, id string) (domain.Stats, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.Stats{}, err
+	}
+	return f.fakeDocker.ContainerStats(ctx, id)
+}
+
+func TestStats_CancelledCallerDoesNotFailTheSharedSample(t *testing.T) {
+	fake := newFakeDocker()
+	fake.stats = domain.Stats{ContainerID: "abc", CPUPercent: 2}
+	svc := service.New(ctxAwareStatsDocker{fake}, store.New(), nil)
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := svc.Stats(cancelled, "abc"); err != nil {
+		t.Fatalf("Stats with cancelled caller ctx: %v", err)
+	}
+}

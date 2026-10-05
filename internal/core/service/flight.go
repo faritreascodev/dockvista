@@ -1,6 +1,13 @@
 package service
 
-import "sync"
+import (
+	"errors"
+	"sync"
+)
+
+// errFlightAborted is what waiters receive when the call they were sharing
+// panicked. Without it they would see a zero value and a nil error.
+var errFlightAborted = errors.New("service: shared call aborted")
 
 // flight collapses concurrent calls that share a key into one execution.
 // It exists so a burst of container events, a poll tick, and a handler can
@@ -26,15 +33,18 @@ func (f *flight) Do(key string, fn func() (any, error)) (any, error) {
 		<-c.done
 		return c.val, c.err
 	}
-	c := &flightCall{done: make(chan struct{})}
+	c := &flightCall{done: make(chan struct{}), err: errFlightAborted}
 	f.calls[key] = c
 	f.mu.Unlock()
 
+	// Cleanup runs even if fn panics, so the key is never stuck and the
+	// waiters are always released.
+	defer func() {
+		f.mu.Lock()
+		delete(f.calls, key)
+		f.mu.Unlock()
+		close(c.done)
+	}()
 	c.val, c.err = fn()
-	close(c.done)
-
-	f.mu.Lock()
-	delete(f.calls, key)
-	f.mu.Unlock()
 	return c.val, c.err
 }

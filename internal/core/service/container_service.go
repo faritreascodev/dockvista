@@ -22,6 +22,10 @@ import (
 // call the daemon again.
 const statsCacheTTL = time.Second
 
+// statsCallTimeout bounds one shared daemon stats call. The call runs on a
+// detached context (see Stats), so it needs its own deadline.
+const statsCallTimeout = 10 * time.Second
+
 // ContainerService is the use-case layer for container inspection and
 // lifecycle control.
 type ContainerService struct {
@@ -95,13 +99,16 @@ func (s *ContainerService) Stats(ctx context.Context, id string) (domain.Stats, 
 		if stats, ok := s.cachedStats(id); ok {
 			return stats, nil
 		}
-		stats, err := s.docker.ContainerStats(ctx, id)
+		// Detach from the caller's context, as RefreshOnce does. The first
+		// caller may be an HTTP request that goes away while others are
+		// still waiting on this same sample.
+		cctx, cancel := context.WithTimeout(context.Background(), statsCallTimeout)
+		defer cancel()
+		stats, err := s.docker.ContainerStats(cctx, id)
 		if err != nil {
 			return domain.Stats{}, err
 		}
-		s.statsMu.Lock()
-		s.statsCache[id] = cachedStats{stats: stats, until: time.Now().Add(statsCacheTTL)}
-		s.statsMu.Unlock()
+		s.storeStats(id, stats)
 		return stats, nil
 	})
 	if err != nil {
@@ -109,6 +116,21 @@ func (s *ContainerService) Stats(ctx context.Context, id string) (domain.Stats, 
 	}
 	stats, _ := v.(domain.Stats)
 	return stats, nil
+}
+
+// storeStats records a fresh sample and drops entries whose TTL has passed.
+// Without the sweep, the map keeps one entry for every container ever
+// sampled, including containers that have since been removed.
+func (s *ContainerService) storeStats(id string, stats domain.Stats) {
+	now := time.Now()
+	s.statsMu.Lock()
+	defer s.statsMu.Unlock()
+	for key, entry := range s.statsCache {
+		if now.After(entry.until) {
+			delete(s.statsCache, key)
+		}
+	}
+	s.statsCache[id] = cachedStats{stats: stats, until: now.Add(statsCacheTTL)}
 }
 
 func (s *ContainerService) cachedStats(id string) (domain.Stats, bool) {
