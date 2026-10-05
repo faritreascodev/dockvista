@@ -109,6 +109,19 @@ make build              # builds web/, embeds it, compiles ./bin/dockvista
 ./bin/dockvista          # serves the full app on :8080
 ```
 
+Without `make` (Windows PowerShell or cmd). Build the frontend first, because
+the Go binary embeds it:
+
+```powershell
+npm --prefix web ci
+npm --prefix web run build
+go build -o bin\dockvista.exe .\cmd\dockvista
+.\bin\dockvista.exe
+```
+
+On Windows, Docker Compose (below) is the simplest route: it needs no Go or
+Node toolchain.
+
 Or with Docker Compose (Docker Desktop on Windows/macOS, or Linux):
 
 ```bash
