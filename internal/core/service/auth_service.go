@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -38,6 +39,19 @@ type AuthService struct {
 	store      ports.CredentialStore
 	secret     []byte
 	setupToken string
+
+	// admin caches the account's username and session generation so that
+	// VerifySession does not read the credential file on every request
+	// (SSE, polling, and stats all authenticate). This service is the only
+	// writer, so the cache is updated in place on revoke. nil until the
+	// first successful verification.
+	adminMu sync.Mutex
+	admin   *cachedAdmin
+}
+
+type cachedAdmin struct {
+	username   string
+	generation uint64
 }
 
 func NewAuthService(store ports.CredentialStore, sessionSecret []byte, setupToken string) *AuthService {
@@ -135,19 +149,46 @@ func (s *AuthService) VerifySession(token string) (string, error) {
 		return "", domain.ErrUnauthorized
 	}
 
-	user, ok, err := s.store.GetUser(username)
-	if err != nil || !ok || user.SessionGeneration != gen {
+	current, ok, err := s.cachedAccount(username)
+	if err != nil || !ok || current.generation != gen {
 		return "", domain.ErrUnauthorized
 	}
 	return username, nil
+}
+
+// cachedAccount returns the account for username, reading the store only on
+// a cache miss. A miss for an unknown account is not cached, so a later
+// setup is picked up.
+func (s *AuthService) cachedAccount(username string) (cachedAdmin, bool, error) {
+	s.adminMu.Lock()
+	defer s.adminMu.Unlock()
+
+	if s.admin != nil && s.admin.username == username {
+		return *s.admin, true, nil
+	}
+	user, ok, err := s.store.GetUser(username)
+	if err != nil || !ok {
+		return cachedAdmin{}, false, err
+	}
+	s.admin = &cachedAdmin{username: user.Username, generation: user.SessionGeneration}
+	return *s.admin, true, nil
 }
 
 // RevokeSessions bumps the account generation so every token already issued
 // fails verification. Single-user logout is global on purpose: there is one
 // account, and a stolen cookie must die with it.
 func (s *AuthService) RevokeSessions() error {
-	if _, err := s.store.BumpSessionGeneration(); err != nil {
+	// Hold the lock across the bump so a concurrent verification cannot
+	// re-cache the old generation after the store has moved on.
+	s.adminMu.Lock()
+	defer s.adminMu.Unlock()
+
+	gen, err := s.store.BumpSessionGeneration()
+	if err != nil {
 		return fmt.Errorf("service: revoke sessions: %w", err)
+	}
+	if s.admin != nil {
+		s.admin.generation = gen
 	}
 	return nil
 }

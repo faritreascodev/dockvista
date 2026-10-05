@@ -167,3 +167,65 @@ func TestAuthService_VerifySession_RejectsMalformedToken(t *testing.T) {
 		}
 	}
 }
+
+// countingCredentialStore counts reads so tests can prove verification is
+// served from the service's cache after the first request.
+type countingCredentialStore struct {
+	fakeCredentialStore
+	getUserCalls int
+}
+
+func (c *countingCredentialStore) GetUser(username string) (domain.User, bool, error) {
+	c.getUserCalls++
+	return c.fakeCredentialStore.GetUser(username)
+}
+
+func TestAuthService_VerifySession_ReadsStoreOnlyOnce(t *testing.T) {
+	store := &countingCredentialStore{}
+	svc := NewAuthService(store, []byte("test-secret"), "test-setup-token")
+	if err := svc.Setup("admin", "correct-horse-battery", "test-setup-token"); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	token, _, err := svc.Login("admin", "correct-horse-battery")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	store.getUserCalls = 0
+	for i := 0; i < 50; i++ {
+		if _, err := svc.VerifySession(token); err != nil {
+			t.Fatalf("VerifySession #%d: %v", i, err)
+		}
+	}
+	if store.getUserCalls > 1 {
+		t.Fatalf("50 verifications read the store %d times, want at most 1", store.getUserCalls)
+	}
+}
+
+func TestAuthService_RevokeInvalidatesCachedSession(t *testing.T) {
+	svc := newTestAuthService()
+	if err := svc.Setup("admin", "correct-horse-battery", "test-setup-token"); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	token, _, err := svc.Login("admin", "correct-horse-battery")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	// Prime the cache, then revoke: the cached generation must move too.
+	if _, err := svc.VerifySession(token); err != nil {
+		t.Fatalf("VerifySession before revoke: %v", err)
+	}
+	if err := svc.RevokeSessions(); err != nil {
+		t.Fatalf("RevokeSessions: %v", err)
+	}
+	if _, err := svc.VerifySession(token); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("VerifySession after revoke = %v, want ErrUnauthorized", err)
+	}
+	fresh, _, err := svc.Login("admin", "correct-horse-battery")
+	if err != nil {
+		t.Fatalf("Login after revoke: %v", err)
+	}
+	if _, err := svc.VerifySession(fresh); err != nil {
+		t.Fatalf("new session after revoke: %v", err)
+	}
+}
