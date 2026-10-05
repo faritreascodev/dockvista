@@ -109,15 +109,28 @@ make build              # builds web/, embeds it, compiles ./bin/dockvista
 ./bin/dockvista          # serves the full app on :8080
 ```
 
-Or with Docker:
+Or with Docker Compose (Docker Desktop on Windows/macOS, or Linux):
 
 ```bash
-make docker-build
-docker run -p 8080:8080 \
-  --group-add "$(stat -c '%g' /var/run/docker.sock)" \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v dockvista-data:/data dockvista:local
+docker compose up -d --build   # UI on http://localhost:8080
+docker compose logs dockvista  # shows the one-time setup token
+docker compose down            # keeps the data volume
 ```
+
+Compose mounts the Docker socket and a named volume for `/data`, so the
+admin account survives restarts. Change the host port with
+`DOCKVISTA_PORT=9000 docker compose up -d`.
+
+On Linux the container's user needs the Docker socket's group. Set it once:
+
+```bash
+export DOCKER_GID="$(getent group docker | cut -d: -f3)"
+docker compose up -d --build
+```
+
+Docker Desktop owns the socket as root (GID 0), which is the default. Plain
+`docker run` works the same way: add `--group-add "$DOCKER_GID"` and mount
+`/var/run/docker.sock` and a volume on `/data`.
 
 **First launch:** open the app in your browser — there's no default account.
 The server log prints a one-time setup token (unless you set

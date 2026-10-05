@@ -1,0 +1,29 @@
+# Keep the build context small and keep local state out of the image build.
+.git
+.github
+.gitattributes
+
+# Frontend dependencies are installed inside the image.
+web/node_modules
+web/dist
+
+# Built UI is produced by the web-build stage; only the committed placeholder is needed.
+internal/platform/embedweb/dist/*
+!internal/platform/embedweb/dist/index.html
+
+# Local runtime state (admin credentials, session key) must never enter the build.
+data
+**/data
+.env
+.env.*
+
+bin
+*.test
+*.out
+
+# Editor local files.
+.vscode
+.idea
+
+Dockerfile
+.dockerignore

@@ -24,7 +24,9 @@ RUN mkdir -p /data && chown 65532:65532 /data
 # ---- runtime ----------------------------------------------------------------
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=go-build /out/dockvista /usr/local/bin/dockvista
-COPY --from=go-build /data /data
+# --chown is required: a plain COPY writes root-owned files, and the
+# nonroot process could then not create the session secret.
+COPY --from=go-build --chown=65532:65532 /data /data
 ENV DOCKVISTA_DATA_DIR=/data
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/dockvista"]

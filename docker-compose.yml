@@ -1,0 +1,27 @@
+# Run DockVista with Docker Compose:
+#   docker compose up -d --build
+# then open http://localhost:8080 and create the admin account (the setup
+# token is printed once in `docker compose logs dockvista`).
+services:
+  dockvista:
+    build: .
+    image: dockvista:local
+    container_name: dockvista
+    restart: unless-stopped
+    ports:
+      - "${DOCKVISTA_PORT:-8080}:8080"
+    environment:
+      # Set to true when a TLS proxy sits in front of DockVista.
+      DOCKVISTA_COOKIE_SECURE: "${DOCKVISTA_COOKIE_SECURE:-false}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - dockvista-data:/data
+    # The socket is owned by root and the process runs as a non-root user, so
+    # it needs the socket's group. Docker Desktop (Windows/macOS) uses GID 0,
+    # which is the default. On Linux, set DOCKER_GID to the host's docker
+    # group, e.g. DOCKER_GID=$(getent group docker | cut -d: -f3).
+    group_add:
+      - "${DOCKER_GID:-0}"
+
+volumes:
+  dockvista-data:
