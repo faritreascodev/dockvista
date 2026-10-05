@@ -1,0 +1,4 @@
+# Store text files with LF in the repository and check them out with LF on
+# every platform. Go, the Makefile, shell scripts and Dockerfiles need LF, and
+# a Windows checkout with CRLF breaks gofmt and the Docker build context.
+* text=auto eol=lf
