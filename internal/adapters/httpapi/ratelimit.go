@@ -16,6 +16,9 @@ type rateLimiter struct {
 	limit    int
 	window   time.Duration
 	visitors map[string][]time.Time
+	// lastSweep is when idle keys were last pruned. Pruning is amortized to
+	// once per window, so a request never pays for a full scan of the map.
+	lastSweep time.Time
 }
 
 func newRateLimiter(limit int, window time.Duration) *rateLimiter {
@@ -33,6 +36,11 @@ func (rl *rateLimiter) allow(key string) bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
+	if now.Sub(rl.lastSweep) >= rl.window {
+		rl.sweep(cutoff)
+		rl.lastSweep = now
+	}
+
 	hits := rl.visitors[key]
 	kept := hits[:0]
 	for _, t := range hits {
@@ -45,20 +53,15 @@ func (rl *rateLimiter) allow(key string) bool {
 	}
 	if len(kept) >= rl.limit {
 		rl.visitors[key] = kept
-		rl.sweep(cutoff)
 		return false
 	}
 	rl.visitors[key] = append(kept, now)
-	rl.sweep(cutoff)
 	return true
 }
 
-// sweep drops keys whose window has expired once the map is large enough
-// that a scan is cheaper than unbounded growth from one-off client addresses.
+// sweep drops keys with no hits inside the window. Without it, every one-off
+// client address stays in the map for the life of the process.
 func (rl *rateLimiter) sweep(cutoff time.Time) {
-	if len(rl.visitors) < 256 {
-		return
-	}
 	for key, hits := range rl.visitors {
 		live := false
 		for _, t := range hits {
