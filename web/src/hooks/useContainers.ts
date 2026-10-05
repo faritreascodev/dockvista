@@ -1,6 +1,6 @@
 import { listContainers } from "../api/client";
 import { usePolling } from "./usePolling";
-import { useResourceRefreshSignal } from "./useEventsContext";
+import { useResourceRefreshSignal } from "./resourceRefresh";
 
 // Safety net only — the shared event feed (see useEventsContext) triggers an
 // immediate refetch whenever the daemon reports a container change.

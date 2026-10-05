@@ -15,7 +15,7 @@ import {
   Sun,
 } from "lucide-react";
 import type { EngineInfo } from "../types/domain";
-import { useSearch } from "../hooks/useSearchContext";
+import { useSearch } from "../hooks/useSearch";
 import { useTheme } from "../hooks/useTheme";
 
 const NAV_ITEMS = [

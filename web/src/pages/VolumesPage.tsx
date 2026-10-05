@@ -4,12 +4,12 @@ import { ApiError, createVolume, pruneVolumes, removeVolume } from "../api/clien
 import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Modal } from "../components/ui/Modal";
-import { useToast } from "../components/ui/Toast";
+import { useToast } from "../components/ui/toastContext";
 import { EmptyState } from "../components/EmptyState";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { TableSkeleton } from "../components/Skeleton";
 import { useVolumes } from "../hooks/useVolumes";
-import { useSearch } from "../hooks/useSearchContext";
+import { useSearch } from "../hooks/useSearch";
 import type { DockerVolume } from "../types/domain";
 import { formatBytes, formatRelativeTime } from "../utils/format";
 

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Plus, X } from "lucide-react";
 import { ApiError, createContainer, type CreateContainerPort } from "../api/client";
-import { useToast } from "./ui/Toast";
+import { useToast } from "./ui/toastContext";
 import { Button } from "./ui/Button";
 import { Modal } from "./ui/Modal";
 
@@ -51,6 +51,19 @@ export function CreateContainerModal({ onClose, onCreated }: CreateContainerModa
       onCreated();
       onClose();
     } catch (err) {
+      // 502 with an id means the daemon created the container but could not
+      // start it. Retrying would create a second one, so treat it as a
+      // partial success: refresh the list, say what happened, and close.
+      const createdId =
+        err instanceof ApiError && err.status === 502
+          ? (err.body as { id?: string } | null)?.id
+          : undefined;
+      if (createdId) {
+        toast.push("error", `Container ${createdId.slice(0, 12)} was created but did not start. Start it from the list.`);
+        onCreated();
+        onClose();
+        return;
+      }
       setError(err instanceof ApiError ? err.message : "Failed to create container.");
     } finally {
       setBusy(false);

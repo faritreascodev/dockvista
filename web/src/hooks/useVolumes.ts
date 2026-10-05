@@ -1,6 +1,6 @@
 import { listVolumes } from "../api/client";
 import { usePolling } from "./usePolling";
-import { useResourceRefreshSignal } from "./useEventsContext";
+import { useResourceRefreshSignal } from "./resourceRefresh";
 
 const POLL_INTERVAL_MS = 20000;
 

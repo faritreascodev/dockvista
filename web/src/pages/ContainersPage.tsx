@@ -6,12 +6,12 @@ import { ContainerTable } from "../components/ContainerTable";
 import { CreateContainerModal } from "../components/CreateContainerModal";
 import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
-import { useToast } from "../components/ui/Toast";
+import { useToast } from "../components/ui/toastContext";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { StatCard } from "../components/StatCard";
 import { useContainers } from "../hooks/useContainers";
 import { useFleetStats } from "../hooks/useFleetStats";
-import { useSearch } from "../hooks/useSearchContext";
+import { useSearch } from "../hooks/useSearch";
 import type { Container, ContainerAction, ContainerState } from "../types/domain";
 import { formatBytes, formatPercent } from "../utils/format";
 

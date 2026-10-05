@@ -7,7 +7,7 @@ import { ErrorBanner } from "../components/ErrorBanner";
 import { StatusBadge } from "../components/StatusBadge";
 import { TableSkeleton } from "../components/Skeleton";
 import { useContainers } from "../hooks/useContainers";
-import { useSearch } from "../hooks/useSearchContext";
+import { useSearch } from "../hooks/useSearch";
 import type { Container, ContainerAction } from "../types/domain";
 import { shortId } from "../utils/format";
 

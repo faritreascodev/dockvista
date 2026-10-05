@@ -4,12 +4,12 @@ import { ApiError, pruneImages, pullImage, removeImage } from "../api/client";
 import { Button } from "../components/ui/Button";
 import { ConfirmDialog } from "../components/ui/ConfirmDialog";
 import { Modal } from "../components/ui/Modal";
-import { useToast } from "../components/ui/Toast";
+import { useToast } from "../components/ui/toastContext";
 import { EmptyState } from "../components/EmptyState";
 import { ErrorBanner } from "../components/ErrorBanner";
 import { TableSkeleton } from "../components/Skeleton";
 import { useImages } from "../hooks/useImages";
-import { useSearch } from "../hooks/useSearchContext";
+import { useSearch } from "../hooks/useSearch";
 import type { DockerImage } from "../types/domain";
 import { formatBytes, formatRelativeTime, shortImageId } from "../utils/format";
 

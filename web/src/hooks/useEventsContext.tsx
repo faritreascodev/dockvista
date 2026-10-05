@@ -1,14 +1,7 @@
-import { createContext, useContext, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useLiveEvents } from "./useLiveEvents";
 import type { DockerEvent } from "../types/domain";
-
-type ResourceType = "container" | "image" | "volume" | "network";
-
-type EventCounters = Record<ResourceType, number>;
-
-const ZERO_COUNTERS: EventCounters = { container: 0, image: 0, volume: 0, network: 0 };
-
-const EventsContext = createContext<EventCounters>(ZERO_COUNTERS);
+import { EventsContext, ZERO_COUNTERS, type EventCounters, type ResourceType } from "./resourceRefresh";
 
 const KNOWN_TYPES = new Set<ResourceType>(["container", "image", "volume", "network"]);
 
@@ -68,8 +61,4 @@ export function EventsProvider({ children }: { children: React.ReactNode }) {
   });
 
   return <EventsContext.Provider value={counters}>{children}</EventsContext.Provider>;
-}
-
-export function useResourceRefreshSignal(type: ResourceType): number {
-  return useContext(EventsContext)[type];
 }

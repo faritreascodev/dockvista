@@ -13,6 +13,9 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    // Parsed JSON error body, when the server sent one. Some error responses
+    // carry data the UI needs (e.g. the id of a container that was created).
+    public body: unknown = null,
   ) {
     super(message);
     this.name = "ApiError";
@@ -23,7 +26,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { credentials: "include", ...init });
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
-    throw new ApiError(res.status, body?.error ?? `request failed: ${res.status}`);
+    throw new ApiError(res.status, body?.error ?? `request failed: ${res.status}`, body);
   }
   if (res.status === 204) {
     return undefined as T;
