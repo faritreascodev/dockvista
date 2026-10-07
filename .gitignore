@@ -14,6 +14,8 @@ web/*.tsbuildinfo
 # Editors / OS
 .vscode/
 .idea/
+.cursor/
+.claude/
 *.swp
 .DS_Store
 

@@ -25,6 +25,8 @@ assets
 # Editor local files.
 .vscode
 .idea
+.cursor
+.claude
 
 Dockerfile
 .dockerignore
