@@ -466,6 +466,25 @@ export function createStack(name: string, yaml: string): Promise<Stack> {
   });
 }
 
+export function createStackFromGit(body: {
+  name: string;
+  gitUrl: string;
+  gitRef?: string;
+  composeFile?: string;
+  gitUsername?: string;
+  gitToken?: string;
+}): Promise<Stack> {
+  return request<Stack>("/api/stacks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function syncStack(id: string): Promise<Stack> {
+  return request<Stack>(`/api/stacks/${encodeURIComponent(id)}/sync`, { method: "POST" });
+}
+
 export function updateStack(id: string, yaml: string): Promise<Stack> {
   return request<Stack>(`/api/stacks/${encodeURIComponent(id)}`, {
     method: "PUT",

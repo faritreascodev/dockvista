@@ -71,6 +71,10 @@ type parsedNamedVolume struct {
 }
 
 func parseComposeYAML(yamlBody, workDir string) (parsedStack, error) {
+	return parseComposeYAMLAt(yamlBody, workDir, workDir)
+}
+
+func parseComposeYAMLAt(yamlBody, composeDir, sandboxRoot string) (parsedStack, error) {
 	var raw composeFile
 	if err := yaml.Unmarshal([]byte(yamlBody), &raw); err != nil {
 		return parsedStack{}, fmt.Errorf("%w: %v", domain.ErrInvalidInput, err)
@@ -125,7 +129,7 @@ func parseComposeYAML(yamlBody, workDir string) (parsedStack, error) {
 			}
 		}
 		for _, v := range svc.Volumes {
-			bind, volMount, err := parseVolumeLine(v, workDir, named)
+			bind, volMount, err := parseVolumeLine(v, composeDir, sandboxRoot, named)
 			if err != nil {
 				return parsedStack{}, err
 			}
@@ -146,7 +150,7 @@ func parseComposeYAML(yamlBody, workDir string) (parsedStack, error) {
 	return out, nil
 }
 
-func parseVolumeLine(raw any, workDir string, named map[string]bool) (bind, volMount string, err error) {
+func parseVolumeLine(raw any, composeDir, sandboxRoot string, named map[string]bool) (bind, volMount string, err error) {
 	s, ok := raw.(string)
 	if !ok {
 		return "", "", fmt.Errorf("%w: long volume syntax is not supported", domain.ErrInvalidInput)
@@ -169,11 +173,11 @@ func parseVolumeLine(raw any, workDir string, named map[string]bool) (bind, volM
 	if filepath.IsAbs(src) || strings.HasPrefix(src, "/") || strings.HasPrefix(src, "\\") {
 		return "", "", domain.ErrBindOutsideStack
 	}
-	abs, err := filepath.Abs(filepath.Join(workDir, src))
+	abs, err := filepath.Abs(filepath.Join(composeDir, src))
 	if err != nil {
 		return "", "", domain.ErrInvalidInput
 	}
-	rel, err := filepath.Rel(workDir, abs)
+	rel, err := filepath.Rel(sandboxRoot, abs)
 	if err != nil || strings.HasPrefix(rel, "..") {
 		return "", "", domain.ErrBindOutsideStack
 	}

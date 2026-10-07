@@ -173,6 +173,9 @@ export interface Stack {
   id: string;
   name: string;
   yaml?: string;
+  gitUrl?: string;
+  gitRef?: string;
+  composeFile?: string;
   createdAt: number;
   updatedAt: number;
 }

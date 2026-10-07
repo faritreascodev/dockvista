@@ -18,4 +18,6 @@ var (
 	ErrLocalProtected   = errors.New("the local environment cannot be removed")
 	ErrBuildUnsupported = errors.New("compose build is not supported; set image: on every service")
 	ErrBindOutsideStack = errors.New("bind mounts must stay inside the stack workspace")
+	ErrGitRemote        = errors.New("only https git remotes are allowed")
+	ErrGitClone         = errors.New("git clone failed")
 )

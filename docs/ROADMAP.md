@@ -16,11 +16,11 @@ These are the product, not polish. New work should strengthen them, not sand the
 
 ## Now (this slice)
 
-Environments, workspace compose, and extra Docker are shipped. Next is **git into the stack workspace**, then Swarm. Do not skip Swarm ahead of git.
+Git into the stack workspace is shipped. Next is **Swarm**. Do not skip it for CVE summaries or other extras.
 
 ## Next
 
-Do these in order. Each one changes the trust model or the surface area; do not skip ahead to git/Swarm because they look bigger.
+Do these in order. Each one changes the trust model or the surface area; do not skip Swarm because extras look smaller.
 
 ### 1. Users (invite-only RBAC) — shipped
 
@@ -59,7 +59,7 @@ Needed before a second engine or git clone exists.
 Today Compose still groups containers by `com.docker.compose.project`.
 
 - [x] Paste a `compose.yml` into a **workspace DockVista owns** (`data/stacks/`) and `up`/`down` through the Docker API. No compose CLI, no host homedir. Bind mounts must stay inside the stack directory. `build:` is refused.
-- Then: git → clone into that workspace → stack. That is Portainer stacks, not a GitHub browser.
+- [x] Git → clone **https** remotes into that workspace (go-git in-process, no git binary, no SSH/`file://`). Sync fetches and hard-resets. Private repos use a token stored 0600 in the data dir.
 
 ### 6. Swarm
 

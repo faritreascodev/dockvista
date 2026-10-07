@@ -53,6 +53,7 @@ func TestRouter_ReadOnlyBlocksWritesAndShell(t *testing.T) {
 		{http.MethodPost, "/api/stacks"},
 		{http.MethodPost, "/api/stacks/demo/up"},
 		{http.MethodPost, "/api/stacks/demo/down"},
+		{http.MethodPost, "/api/stacks/demo/sync"},
 		{http.MethodPost, "/api/environments"},
 		{http.MethodPut, "/api/registries"},
 	}

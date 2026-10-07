@@ -56,7 +56,7 @@ Everything else under `/api/` requires the session cookie. New routes added unde
 | Events | `GET /api/events` is one broker subscription per tab |
 | Users | Admin: `GET /api/users`, `POST /api/users/invite`, `PATCH/DELETE /api/users/{username}`. Public: `GET /api/auth/invite`, `POST /api/auth/accept`. Viewer cannot mutate Docker; Operator cannot manage users |
 | Environments | `GET /api/environments`, `POST /api/environments/{id}/select`. Admin: create/delete TCP+TLS. SSH is 400 |
-| Stacks | Workspace compose under the data dir. `POST /api/stacks/{id}/up` and `/down` talk to the **active** environment |
+| Stacks | Workspace compose under the data dir. Paste YAML or `POST` with `gitUrl` (https only). `POST /api/stacks/{id}/sync` fetches a git stack. `/up` and `/down` talk to the **active** environment |
 | Registries | Admin: `GET/PUT /api/registries`. Used as `X-Registry-Auth` on pull |
 | Image history | `GET /api/images/history?id=` |
 | Volume files | `GET /api/volumes/{name}/files` via a running container that mounts the volume |

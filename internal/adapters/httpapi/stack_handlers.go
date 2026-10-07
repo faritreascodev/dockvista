@@ -13,18 +13,34 @@ type stackService interface {
 	List() ([]domain.Stack, error)
 	Get(id string) (domain.Stack, error)
 	Create(name, yamlBody string) (domain.Stack, error)
+	CreateFromGit(ctx context.Context, name, gitURL, gitRef, composeFile, username, token string) (domain.Stack, error)
 	Update(id, yamlBody string) (domain.Stack, error)
+	Sync(ctx context.Context, id string) (domain.Stack, error)
 	Delete(id string) error
 	Up(ctx context.Context, id string) error
 	Down(ctx context.Context, id string, volumes bool) error
 }
 
 type stackDTO struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	YAML      string `json:"yaml,omitempty"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	YAML        string `json:"yaml,omitempty"`
+	GitURL      string `json:"gitUrl,omitempty"`
+	GitRef      string `json:"gitRef,omitempty"`
+	ComposeFile string `json:"composeFile,omitempty"`
+	CreatedAt   int64  `json:"createdAt"`
+	UpdatedAt   int64  `json:"updatedAt"`
+}
+
+func toStackDTO(s domain.Stack, includeYAML bool) stackDTO {
+	dto := stackDTO{
+		ID: s.ID, Name: s.Name, GitURL: s.GitURL, GitRef: s.GitRef,
+		ComposeFile: s.ComposeFile, CreatedAt: s.CreatedAt.Unix(), UpdatedAt: s.UpdatedAt.Unix(),
+	}
+	if includeYAML {
+		dto.YAML = s.YAML
+	}
+	return dto
 }
 
 func stacksOf(r *http.Request) stackService {
@@ -47,7 +63,7 @@ func (h *stackHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]stackDTO, 0, len(list))
 	for _, s := range list {
-		out = append(out, stackDTO{ID: s.ID, Name: s.Name, CreatedAt: s.CreatedAt.Unix(), UpdatedAt: s.UpdatedAt.Unix()})
+		out = append(out, toStackDTO(s, false))
 	}
 	httpjson.Write(w, http.StatusOK, out)
 }
@@ -63,12 +79,17 @@ func (h *stackHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	httpjson.Write(w, http.StatusOK, stackDTO{ID: st.ID, Name: st.Name, YAML: st.YAML, CreatedAt: st.CreatedAt.Unix(), UpdatedAt: st.UpdatedAt.Unix()})
+	httpjson.Write(w, http.StatusOK, toStackDTO(st, true))
 }
 
 type stackWriteRequest struct {
-	Name string `json:"name"`
-	YAML string `json:"yaml"`
+	Name        string `json:"name"`
+	YAML        string `json:"yaml"`
+	GitURL      string `json:"gitUrl"`
+	GitRef      string `json:"gitRef"`
+	ComposeFile string `json:"composeFile"`
+	GitUsername string `json:"gitUsername"`
+	GitToken    string `json:"gitToken"`
 }
 
 func (h *stackHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
@@ -82,12 +103,24 @@ func (h *stackHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	st, err := svc.Create(req.Name, req.YAML)
+	if req.GitURL != "" && req.YAML != "" {
+		writeError(w, http.StatusBadRequest, "provide yaml or gitUrl, not both")
+		return
+	}
+	var (
+		st  domain.Stack
+		err error
+	)
+	if req.GitURL != "" {
+		st, err = svc.CreateFromGit(r.Context(), req.Name, req.GitURL, req.GitRef, req.ComposeFile, req.GitUsername, req.GitToken)
+	} else {
+		st, err = svc.Create(req.Name, req.YAML)
+	}
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	httpjson.Write(w, http.StatusCreated, stackDTO{ID: st.ID, Name: st.Name, YAML: st.YAML, CreatedAt: st.CreatedAt.Unix(), UpdatedAt: st.UpdatedAt.Unix()})
+	httpjson.Write(w, http.StatusCreated, toStackDTO(st, true))
 }
 
 func (h *stackHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +139,21 @@ func (h *stackHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	httpjson.Write(w, http.StatusOK, stackDTO{ID: st.ID, Name: st.Name, YAML: st.YAML, CreatedAt: st.CreatedAt.Unix(), UpdatedAt: st.UpdatedAt.Unix()})
+	httpjson.Write(w, http.StatusOK, toStackDTO(st, true))
+}
+
+func (h *stackHandlers) handleSync(w http.ResponseWriter, r *http.Request) {
+	svc := stacksOf(r)
+	if svc == nil {
+		writeError(w, http.StatusNotFound, "stack not found")
+		return
+	}
+	st, err := svc.Sync(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	httpjson.Write(w, http.StatusOK, toStackDTO(st, false))
 }
 
 func (h *stackHandlers) handleDelete(w http.ResponseWriter, r *http.Request) {

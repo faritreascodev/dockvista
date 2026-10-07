@@ -163,6 +163,7 @@ func NewRouter(s Services, staticHandler http.Handler, log *slog.Logger, opts Op
 	protected.Handle("DELETE /api/stacks/{id}", mutating(http.HandlerFunc(sthStacks.handleDelete)))
 	protected.Handle("POST /api/stacks/{id}/up", mutating(http.HandlerFunc(sthStacks.handleUp)))
 	protected.Handle("POST /api/stacks/{id}/down", mutating(http.HandlerFunc(sthStacks.handleDown)))
+	protected.Handle("POST /api/stacks/{id}/sync", mutating(http.HandlerFunc(sthStacks.handleSync)))
 
 	protected.Handle("GET /api/registries", adminOnly(http.HandlerFunc(rh.handleList)))
 	protected.Handle("PUT /api/registries", adminOnly(mutating(http.HandlerFunc(rh.handleUpsert))))

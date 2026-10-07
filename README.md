@@ -31,10 +31,10 @@ a React/TypeScript frontend, shipped as a single binary.
 - **Images, Volumes, Networks** — list, create/pull, remove, and prune, each
   with the same validation and confirmation-before-delete pattern. Image
   history shows layers. Volume browse lists files through a running mount.
-- **Compose** — paste a `compose.yml` into a workspace DockVista owns and
-  `up`/`down` through the Docker API (no host homedir, no `build:`). Existing
-  containers are still grouped by `com.docker.compose.project` with stack-wide
-  start/stop.
+- **Compose** — paste a `compose.yml` or clone an **https** git repo into a
+  workspace DockVista owns, then `up`/`down` through the Docker API (no host
+  homedir, no `build:`, no SSH remotes). Existing containers are still grouped
+  by `com.docker.compose.project` with stack-wide start/stop.
 - **Environments** — Local plus named TCP+TLS daemons. One environment is one
   engine; the sidebar switches the cookie. SSH is not in this release.
 - **Read-only mode** — `DOCKVISTA_READ_ONLY=true` turns the instance into a
@@ -289,9 +289,9 @@ Implemented:
 - [x] Invite-only RBAC (Admin / Operator / Viewer)
 - [x] CSRF Origin check, login lockout, idle sessions, `audit.log`
 - [x] GHCR image, `/readyz`, TLS compose overlay, Windows tray launcher
-- [x] Named environments (local + TCP+TLS), workspace Compose up/down, image history, volume browse, private registries
+- [x] Named environments (local + TCP+TLS), workspace Compose up/down, https git stacks, image history, volume browse, private registries
 
-The rest of the backlog (git into the stack workspace, Swarm) lives in
+The rest of the backlog (Swarm) lives in
 [docs/ROADMAP.md](docs/ROADMAP.md). That file is the one source of truth
 for what we will and will not take on.
 

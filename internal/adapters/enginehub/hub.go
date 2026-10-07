@@ -11,6 +11,7 @@ import (
 	"dockvista/internal/adapters/broker"
 	dockeradapter "dockvista/internal/adapters/docker"
 	"dockvista/internal/adapters/envstore"
+	"dockvista/internal/adapters/gitclone"
 	"dockvista/internal/adapters/httpapi"
 	"dockvista/internal/adapters/regstore"
 	"dockvista/internal/adapters/stackstore"
@@ -229,7 +230,7 @@ func (h *Hub) attach(meta domain.Environment, cli *dockeradapter.Client) {
 	containers := service.New(cli, store.New(), h.log)
 	volumes := service.NewVolumeService(cli)
 	networks := service.NewNetworkService(cli)
-	stacks := service.NewStackService(h.stacks, cli)
+	stacks := service.NewStackService(h.stacks, cli, gitclone.New())
 	stacks.SetRegistryAuth(h.authHeader)
 	events := broker.New[domain.Event]()
 	rt := &runtime{

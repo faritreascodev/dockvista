@@ -17,15 +17,19 @@ import (
 const (
 	indexFile  = "stacks.json"
 	stacksDir  = "stacks"
+	authDir    = "stack-auth"
 	composeRel = "compose.yml"
 	docVersion = 1
 )
 
 type stored struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	GitURL      string    `json:"gitUrl,omitempty"`
+	GitRef      string    `json:"gitRef,omitempty"`
+	ComposeFile string    `json:"composeFile,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
 }
 
 type doc struct {
@@ -42,6 +46,9 @@ type Store struct {
 func New(dataDir string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(dataDir, stacksDir), 0o700); err != nil {
 		return nil, fmt.Errorf("stackstore: mkdir: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dataDir, authDir), 0o700); err != nil {
+		return nil, fmt.Errorf("stackstore: mkdir auth: %w", err)
 	}
 	return &Store{dataDir: dataDir, path: filepath.Join(dataDir, indexFile)}, nil
 }
@@ -110,6 +117,107 @@ func (s *Store) Create(name, yamlBody string) (domain.Stack, error) {
 	return domain.Stack{ID: it.ID, Name: name, YAML: yamlBody, CreatedAt: now, UpdatedAt: now}, nil
 }
 
+func (s *Store) CreateGit(name, gitURL, gitRef, composeFile string) (domain.Stack, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, err := s.read()
+	if err != nil {
+		return domain.Stack{}, err
+	}
+	if len(d.Items) >= domain.MaxStacks {
+		return domain.Stack{}, domain.ErrInvalidInput
+	}
+	for _, it := range d.Items {
+		if it.Name == name {
+			return domain.Stack{}, domain.ErrInvalidInput
+		}
+	}
+	now := time.Now().UTC()
+	it := stored{
+		ID: uuid.NewString(), Name: name, GitURL: gitURL, GitRef: gitRef,
+		ComposeFile: composeFile, CreatedAt: now, UpdatedAt: now,
+	}
+	if err := os.MkdirAll(s.Dir(it.ID), 0o700); err != nil {
+		return domain.Stack{}, err
+	}
+	d.Items = append(d.Items, it)
+	if err := s.write(d); err != nil {
+		return domain.Stack{}, err
+	}
+	return domain.Stack{
+		ID: it.ID, Name: name, GitURL: gitURL, GitRef: gitRef,
+		ComposeFile: composeFile, CreatedAt: now, UpdatedAt: now,
+	}, nil
+}
+
+func (s *Store) SetComposeFile(id, rel string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, err := s.read()
+	if err != nil {
+		return err
+	}
+	for i, it := range d.Items {
+		if it.ID != id {
+			continue
+		}
+		it.ComposeFile = rel
+		it.UpdatedAt = time.Now().UTC()
+		d.Items[i] = it
+		return s.write(d)
+	}
+	return domain.ErrNotFound
+}
+
+func (s *Store) Reload(id string) (domain.Stack, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, err := s.read()
+	if err != nil {
+		return domain.Stack{}, err
+	}
+	for i, it := range d.Items {
+		if it.ID != id {
+			continue
+		}
+		it.UpdatedAt = time.Now().UTC()
+		d.Items[i] = it
+		if err := s.write(d); err != nil {
+			return domain.Stack{}, err
+		}
+		return s.loadLocked(it)
+	}
+	return domain.Stack{}, domain.ErrNotFound
+}
+
+type gitAuth struct {
+	Username string `json:"username"`
+	Token    string `json:"token"`
+}
+
+func (s *Store) SetGitAuth(id, username, token string) error {
+	if username == "" && token == "" {
+		return nil
+	}
+	b, err := json.Marshal(gitAuth{Username: username, Token: token})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(s.dataDir, authDir, id), b, 0o600)
+}
+
+func (s *Store) GitAuth(id string) (username, token string) {
+	b, err := os.ReadFile(filepath.Join(s.dataDir, authDir, id))
+	if err != nil {
+		return "", ""
+	}
+	var a gitAuth
+	if json.Unmarshal(b, &a) != nil {
+		return "", ""
+	}
+	return a.Username, a.Token
+}
+
 func (s *Store) UpdateYAML(id, yamlBody string) (domain.Stack, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -158,15 +266,29 @@ func (s *Store) Delete(id string) error {
 		return err
 	}
 	_ = os.RemoveAll(s.Dir(id))
+	_ = os.Remove(filepath.Join(s.dataDir, authDir, id))
 	return nil
 }
 
 func (s *Store) loadLocked(it stored) (domain.Stack, error) {
-	b, err := os.ReadFile(filepath.Join(s.Dir(it.ID), composeRel))
+	rel := it.ComposeFile
+	if rel == "" {
+		rel = composeRel
+	}
+	b, err := os.ReadFile(filepath.Join(s.Dir(it.ID), filepath.FromSlash(rel)))
 	if err != nil {
+		if it.GitURL != "" && errors.Is(err, os.ErrNotExist) {
+			return domain.Stack{
+				ID: it.ID, Name: it.Name, GitURL: it.GitURL, GitRef: it.GitRef,
+				ComposeFile: it.ComposeFile, CreatedAt: it.CreatedAt, UpdatedAt: it.UpdatedAt,
+			}, nil
+		}
 		return domain.Stack{}, fmt.Errorf("stackstore: read yaml: %w", err)
 	}
-	return domain.Stack{ID: it.ID, Name: it.Name, YAML: string(b), CreatedAt: it.CreatedAt, UpdatedAt: it.UpdatedAt}, nil
+	return domain.Stack{
+		ID: it.ID, Name: it.Name, YAML: string(b), GitURL: it.GitURL, GitRef: it.GitRef,
+		ComposeFile: it.ComposeFile, CreatedAt: it.CreatedAt, UpdatedAt: it.UpdatedAt,
+	}, nil
 }
 
 func (s *Store) writeYAML(id, body string) error {

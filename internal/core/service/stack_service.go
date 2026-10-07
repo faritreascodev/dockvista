@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"dockvista/internal/core/domain"
@@ -13,9 +15,19 @@ type StackStore interface {
 	List() ([]domain.Stack, error)
 	Get(id string) (domain.Stack, error)
 	Create(name, yamlBody string) (domain.Stack, error)
+	CreateGit(name, gitURL, gitRef, composeFile string) (domain.Stack, error)
 	UpdateYAML(id, yamlBody string) (domain.Stack, error)
+	SetComposeFile(id, rel string) error
+	Reload(id string) (domain.Stack, error)
+	SetGitAuth(id, username, token string) error
+	GitAuth(id string) (username, token string)
 	Delete(id string) error
 	Dir(id string) string
+}
+
+type GitCloner interface {
+	Clone(ctx context.Context, dir, remote, ref, username, token string) error
+	Update(ctx context.Context, dir, remote, ref, username, token string) error
 }
 
 type stackEngine interface {
@@ -38,11 +50,12 @@ type stackEngine interface {
 type StackService struct {
 	store        StackStore
 	docker       stackEngine
+	git          GitCloner
 	registryAuth func(ref string) string
 }
 
-func NewStackService(store StackStore, docker stackEngine) *StackService {
-	return &StackService{store: store, docker: docker}
+func NewStackService(store StackStore, docker stackEngine, git GitCloner) *StackService {
+	return &StackService{store: store, docker: docker, git: git}
 }
 
 func (s *StackService) SetRegistryAuth(fn func(ref string) string) {
@@ -71,6 +84,13 @@ func (s *StackService) Create(name, yamlBody string) (domain.Stack, error) {
 }
 
 func (s *StackService) Update(id, yamlBody string) (domain.Stack, error) {
+	st, err := s.store.Get(id)
+	if err != nil {
+		return domain.Stack{}, err
+	}
+	if st.GitURL != "" {
+		return domain.Stack{}, fmt.Errorf("%w: git stacks are updated with sync, not pasted YAML", domain.ErrInvalidInput)
+	}
 	if len(yamlBody) == 0 || len(yamlBody) > domain.MaxStackYAML {
 		return domain.Stack{}, domain.ErrInvalidInput
 	}
@@ -78,6 +98,116 @@ func (s *StackService) Update(id, yamlBody string) (domain.Stack, error) {
 		return domain.Stack{}, err
 	}
 	return s.store.UpdateYAML(id, yamlBody)
+}
+
+func (s *StackService) CreateFromGit(ctx context.Context, name, gitURL, gitRef, composeFile, username, token string) (domain.Stack, error) {
+	if err := domain.ValidateStackName(name); err != nil {
+		return domain.Stack{}, err
+	}
+	if err := domain.ValidateGitRemote(gitURL); err != nil {
+		return domain.Stack{}, err
+	}
+	ref, err := domain.NormalizeGitRef(gitRef)
+	if err != nil {
+		return domain.Stack{}, err
+	}
+	if err := domain.ValidateComposeRel(composeFile); err != nil {
+		return domain.Stack{}, err
+	}
+	if s.git == nil {
+		return domain.Stack{}, domain.ErrGitClone
+	}
+	st, err := s.store.CreateGit(name, gitURL, ref, strings.TrimSpace(composeFile))
+	if err != nil {
+		return domain.Stack{}, err
+	}
+	if err := s.store.SetGitAuth(st.ID, username, token); err != nil {
+		_ = s.store.Delete(st.ID)
+		return domain.Stack{}, err
+	}
+	if err := s.git.Clone(ctx, s.store.Dir(st.ID), gitURL, ref, username, token); err != nil {
+		_ = s.store.Delete(st.ID)
+		return domain.Stack{}, err
+	}
+	rel, err := findComposeFile(s.store.Dir(st.ID), composeFile)
+	if err != nil {
+		_ = s.store.Delete(st.ID)
+		return domain.Stack{}, err
+	}
+	if err := s.store.SetComposeFile(st.ID, rel); err != nil {
+		_ = s.store.Delete(st.ID)
+		return domain.Stack{}, err
+	}
+	st, err = s.store.Reload(st.ID)
+	if err != nil {
+		_ = s.store.Delete(st.ID)
+		return domain.Stack{}, err
+	}
+	if _, err := parseComposeYAMLAt(st.YAML, composeDir(s.store.Dir(st.ID), rel), s.store.Dir(st.ID)); err != nil {
+		_ = s.store.Delete(st.ID)
+		return domain.Stack{}, err
+	}
+	return st, nil
+}
+
+func (s *StackService) Sync(ctx context.Context, id string) (domain.Stack, error) {
+	st, err := s.store.Get(id)
+	if err != nil {
+		return domain.Stack{}, err
+	}
+	if st.GitURL == "" {
+		return domain.Stack{}, fmt.Errorf("%w: not a git stack", domain.ErrInvalidInput)
+	}
+	if s.git == nil {
+		return domain.Stack{}, domain.ErrGitClone
+	}
+	user, token := s.store.GitAuth(id)
+	if err := s.git.Update(ctx, s.store.Dir(id), st.GitURL, st.GitRef, user, token); err != nil {
+		return domain.Stack{}, err
+	}
+	rel, err := findComposeFile(s.store.Dir(id), st.ComposeFile)
+	if err != nil {
+		return domain.Stack{}, err
+	}
+	if rel != st.ComposeFile {
+		if err := s.store.SetComposeFile(id, rel); err != nil {
+			return domain.Stack{}, err
+		}
+	}
+	st, err = s.store.Reload(id)
+	if err != nil {
+		return domain.Stack{}, err
+	}
+	if _, err := parseComposeYAMLAt(st.YAML, composeDir(s.store.Dir(id), rel), s.store.Dir(id)); err != nil {
+		return domain.Stack{}, err
+	}
+	return st, nil
+}
+
+func findComposeFile(root, specified string) (string, error) {
+	specified = strings.TrimSpace(strings.ReplaceAll(specified, "\\", "/"))
+	if specified != "" {
+		if err := domain.ValidateComposeRel(specified); err != nil {
+			return "", err
+		}
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(specified))); err != nil {
+			return "", fmt.Errorf("%w: compose file %s not in the clone", domain.ErrNotFound, specified)
+		}
+		return specified, nil
+	}
+	for _, name := range []string{"compose.yml", "compose.yaml", "docker-compose.yml", "docker-compose.yaml"} {
+		if _, err := os.Stat(filepath.Join(root, name)); err == nil {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("%w: no compose.yml at the repo root", domain.ErrInvalidInput)
+}
+
+func composeDir(root, rel string) string {
+	if rel == "" || filepath.Dir(filepath.FromSlash(rel)) == "." {
+		return root
+	}
+	return filepath.Join(root, filepath.Dir(filepath.FromSlash(rel)))
 }
 
 func (s *StackService) Delete(id string) error {
@@ -89,7 +219,8 @@ func (s *StackService) Up(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	parsed, err := parseComposeYAML(st.YAML, s.store.Dir(id))
+	rel := st.ComposeFile
+	parsed, err := parseComposeYAMLAt(st.YAML, composeDir(s.store.Dir(id), rel), s.store.Dir(id))
 	if err != nil {
 		return err
 	}
@@ -208,7 +339,7 @@ func (s *StackService) Down(ctx context.Context, id string, volumes bool) error 
 			return err
 		}
 	}
-	parsed, err := parseComposeYAML(st.YAML, s.store.Dir(id))
+	parsed, err := parseComposeYAMLAt(st.YAML, composeDir(s.store.Dir(id), st.ComposeFile), s.store.Dir(id))
 	if err != nil {
 		return err
 	}

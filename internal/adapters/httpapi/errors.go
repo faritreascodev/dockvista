@@ -47,6 +47,10 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "compose build is not supported; set image: on every service")
 	case errors.Is(err, domain.ErrBindOutsideStack):
 		writeError(w, http.StatusBadRequest, "bind mounts must stay inside the stack workspace")
+	case errors.Is(err, domain.ErrGitRemote):
+		writeError(w, http.StatusBadRequest, "only https git remotes are allowed")
+	case errors.Is(err, domain.ErrGitClone):
+		writeError(w, http.StatusBadGateway, "git clone failed")
 	default:
 		writeError(w, http.StatusBadGateway, "docker engine error")
 	}

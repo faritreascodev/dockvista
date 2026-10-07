@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Layers, Play, Square, Upload } from "lucide-react";
-import { createStack, deleteStack, downStack, listStacks, runContainerAction, upStack } from "../api/client";
+import { Layers, Play, RefreshCw, Square, Upload } from "lucide-react";
+import { createStack, createStackFromGit, deleteStack, downStack, listStacks, runContainerAction, syncStack, upStack } from "../api/client";
 import { ContainerActions } from "../components/ContainerActions";
 import { EmptyState } from "../components/EmptyState";
 import { ErrorBanner } from "../components/ErrorBanner";
@@ -10,6 +10,7 @@ import { TableSkeleton } from "../components/Skeleton";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button } from "../components/ui/Button";
 import { FieldLabel } from "../components/ui/Form";
+import { Segmented } from "../components/ui/Segmented";
 import { useToast } from "../components/ui/toastContext";
 import { useContainers } from "../hooks/useContainers";
 import { useFleetStats } from "../hooks/useFleetStats";
@@ -47,9 +48,10 @@ function serviceName(c: Container): string {
 }
 
 /**
- * Workspace stacks (paste YAML, up/down through the Docker API) plus
- * grouping of already-known containers by com.docker.compose.project.
- * Per-project Start all / Stop all still fans out to container endpoints.
+ * Workspace stacks (paste YAML or clone https git, up/down through the
+ * Docker API) plus grouping of already-known containers by
+ * com.docker.compose.project. Per-project Start all / Stop all still fans
+ * out to container endpoints.
  */
 export function ComposePage() {
   const { data: containers, error, loading } = useContainers();
@@ -74,7 +76,7 @@ export function ComposePage() {
       <PageHeader
         kicker="Workloads"
         title="Compose"
-        description="Stacks DockVista owns (paste a compose file, then up/down), plus containers already labelled by Compose on this engine."
+        description="Stacks DockVista owns (paste YAML or clone https git into the data dir, then up/down), plus containers already labelled by Compose on this engine."
       />
 
       <StacksPanel />
@@ -111,7 +113,13 @@ function StacksPanel() {
   const [stacks, setStacks] = useState<Stack[]>([]);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  const [mode, setMode] = useState<"paste" | "git">("paste");
   const [yaml, setYaml] = useState("services:\n  web:\n    image: nginx:alpine\n    ports:\n      - \"8080:80\"\n");
+  const [gitUrl, setGitUrl] = useState("");
+  const [gitRef, setGitRef] = useState("main");
+  const [composeFile, setComposeFile] = useState("");
+  const [gitUsername, setGitUsername] = useState("");
+  const [gitToken, setGitToken] = useState("");
   const [busy, setBusy] = useState(false);
 
   const refresh = async () => setStacks(await listStacks());
@@ -124,7 +132,9 @@ function StacksPanel() {
       <div className="flex items-center justify-between border-b border-edge px-5 py-3">
         <div>
           <h2 className="text-sm font-semibold text-ink">Workspace stacks</h2>
-          <p className="text-xs text-ink-faint">YAML lives under the data dir. Bind mounts must stay inside that folder. No git clone yet.</p>
+          <p className="text-xs text-ink-faint">
+            YAML or an https clone lives under the data dir. Bind mounts must stay inside that folder. No SSH remotes.
+          </p>
         </div>
         {!readOnly && (
           <Button variant="primary" onClick={() => setOpen(true)}>
@@ -140,10 +150,30 @@ function StacksPanel() {
             <div key={s.id} className="flex items-center justify-between gap-3 px-5 py-3">
               <div>
                 <p className="font-mono text-sm text-ink">{s.name}</p>
-                <p className="text-[11px] text-ink-faint">project dv-{s.name}</p>
+                <p className="text-[11px] text-ink-faint">
+                  project dv-{s.name}
+                  {s.gitUrl ? ` · ${s.gitRef || "main"}` : ""}
+                </p>
+                {s.gitUrl && <p className="truncate font-mono text-[11px] text-ink-faint">{s.gitUrl}</p>}
               </div>
               {!readOnly && (
                 <div className="flex gap-2">
+                  {s.gitUrl && (
+                    <Button
+                      size="sm"
+                      onClick={async () => {
+                        try {
+                          await syncStack(s.id);
+                          toast.push("success", `Synced ${s.name}.`);
+                          await refresh();
+                        } catch (err) {
+                          toast.push("error", err instanceof Error ? err.message : `Could not sync ${s.name}.`);
+                        }
+                      }}
+                    >
+                      <RefreshCw className="h-3 w-3" /> Sync
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     onClick={async () => {
@@ -195,9 +225,66 @@ function StacksPanel() {
           <FieldLabel htmlFor="stack-name">Name (lowercase)</FieldLabel>
           <input id="stack-name" className="field mt-1" value={name} onChange={(e) => setName(e.target.value)} />
           <div className="mt-3">
-            <FieldLabel htmlFor="stack-yaml">compose.yml</FieldLabel>
+            <Segmented
+              value={mode}
+              onChange={setMode}
+              options={[
+                { value: "paste", label: "Paste YAML" },
+                { value: "git", label: "From git" },
+              ]}
+            />
           </div>
-          <textarea id="stack-yaml" className="field mt-1 font-mono" rows={10} value={yaml} onChange={(e) => setYaml(e.target.value)} />
+          {mode === "paste" ? (
+            <>
+              <div className="mt-3">
+                <FieldLabel htmlFor="stack-yaml">compose.yml</FieldLabel>
+              </div>
+              <textarea id="stack-yaml" className="field mt-1 font-mono" rows={10} value={yaml} onChange={(e) => setYaml(e.target.value)} />
+            </>
+          ) : (
+            <div className="mt-3 space-y-3">
+              <div>
+                <FieldLabel htmlFor="stack-git-url" hint="https only">
+                  Repository
+                </FieldLabel>
+                <input
+                  id="stack-git-url"
+                  className="field mt-1 font-mono"
+                  placeholder="https://github.com/org/repo.git"
+                  value={gitUrl}
+                  onChange={(e) => setGitUrl(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <FieldLabel htmlFor="stack-git-ref">Branch or tag</FieldLabel>
+                  <input id="stack-git-ref" className="field mt-1 font-mono" value={gitRef} onChange={(e) => setGitRef(e.target.value)} />
+                </div>
+                <div>
+                  <FieldLabel htmlFor="stack-compose-file" hint="optional">
+                    Compose path
+                  </FieldLabel>
+                  <input
+                    id="stack-compose-file"
+                    className="field mt-1 font-mono"
+                    placeholder="compose.yml"
+                    value={composeFile}
+                    onChange={(e) => setComposeFile(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <input className="field" placeholder="username (private repos)" value={gitUsername} onChange={(e) => setGitUsername(e.target.value)} />
+                <input
+                  className="field"
+                  type="password"
+                  placeholder="token (stored 0600 in the data dir)"
+                  value={gitToken}
+                  onChange={(e) => setGitToken(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
           <div className="mt-3 flex gap-2">
             <Button
               variant="primary"
@@ -205,8 +292,20 @@ function StacksPanel() {
               onClick={async () => {
                 setBusy(true);
                 try {
-                  await createStack(name, yaml);
-                  toast.push("success", `Saved ${name}.`);
+                  if (mode === "git") {
+                    await createStackFromGit({
+                      name,
+                      gitUrl,
+                      ...(gitRef.trim() ? { gitRef: gitRef.trim() } : {}),
+                      ...(composeFile.trim() ? { composeFile: composeFile.trim() } : {}),
+                      ...(gitUsername.trim() ? { gitUsername: gitUsername.trim() } : {}),
+                      ...(gitToken.trim() ? { gitToken: gitToken.trim() } : {}),
+                    });
+                    toast.push("success", `Cloned ${name}.`);
+                  } else {
+                    await createStack(name, yaml);
+                    toast.push("success", `Saved ${name}.`);
+                  }
                   setOpen(false);
                   await refresh();
                 } catch (err) {
@@ -216,7 +315,7 @@ function StacksPanel() {
                 }
               }}
             >
-              Save
+              {mode === "git" ? "Clone" : "Save"}
             </Button>
             <Button variant="ghost" onClick={() => setOpen(false)}>
               Cancel
