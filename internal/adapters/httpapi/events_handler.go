@@ -31,7 +31,7 @@ func (h *handlers) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events, unsubscribe := h.events.Subscribe()
+	events, unsubscribe := h.ev(r).Subscribe()
 	defer unsubscribe()
 
 	w.Header().Set("Content-Type", "text/event-stream")

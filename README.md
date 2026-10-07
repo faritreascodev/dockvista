@@ -1,5 +1,9 @@
 # DockVista
 
+<p align="center">
+  <img src="assets/logos/dockvista-banner.jpg" alt="DockVista — self-hosted Docker console" width="720">
+</p>
+
 [![CI](https://github.com/faritreascodev/dockvista/actions/workflows/ci.yml/badge.svg)](https://github.com/faritreascodev/dockvista/actions/workflows/ci.yml)
 ![Go Version](https://img.shields.io/badge/go-1.26%2B-00ADD8?logo=go)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -12,15 +16,35 @@ a React/TypeScript frontend, shipped as a single binary.
 
 ## Features
 
+- **Overview** — one screen for the whole engine: running/stopped counts,
+  fleet CPU and memory with a live sparkline, `docker system df` disk usage
+  (images, containers, volumes, build cache, and how much is reclaimable),
+  top consumers, a live activity feed, and engine info.
 - **Full container lifecycle** — create, start, stop, pause, restart, remove,
-  live logs (SSE), an interactive `/bin/sh` terminal (WebSocket), and a raw
-  Inspect view.
+  live logs (SSE) with grep, timestamps, since-filters and download, an
+  interactive terminal (WebSocket; `bash` when the image has it, `sh`
+  otherwise), per-container CPU / memory / net / block I/O, a Files browser
+  with a writable-layer Changes view (`docker diff`), Bind mounts spelled
+  out (including Docker Desktop / WSL host paths), and a raw Inspect view.
+- **Command palette** — `Ctrl/⌘ + K` fuzzy-jumps to any page or container;
+  `Shift + Enter` opens a container straight on its logs.
 - **Images, Volumes, Networks** — list, create/pull, remove, and prune, each
-  with the same validation and confirmation-before-delete pattern.
-- **Compose grouping** — containers grouped by their
-  `com.docker.compose.project` label, with per-service actions. Read-only
-  grouping, not full `docker compose up/down` orchestration — see
-  [Roadmap](#roadmap) for why.
+  with the same validation and confirmation-before-delete pattern. Image
+  history shows layers. Volume browse lists files through a running mount.
+- **Compose** — paste a `compose.yml` into a workspace DockVista owns and
+  `up`/`down` through the Docker API (no host homedir, no `build:`). Existing
+  containers are still grouped by `com.docker.compose.project` with stack-wide
+  start/stop.
+- **Environments** — Local plus named TCP+TLS daemons. One environment is one
+  engine; the sidebar switches the cookie. SSH is not in this release.
+- **Read-only mode** — `DOCKVISTA_READ_ONLY=true` turns the instance into a
+  safe status board: every state-changing route and the terminal answer
+  `403` server-side, and the UI hides the controls.
+- **Storage cleanup** — itemized disk usage (containers, images, volumes,
+  build cache). Safe presets never touch running workloads. Anything labelled
+  `dockvista.protect=true` is skipped. You type `DELETE` (or `DELETE VOLUMES`)
+  before anything is removed, and the engine re-checks eligibility at that
+  moment.
 - **Real-time, not polling** — a background goroutine subscribes to the
   Docker daemon's own event stream and fans it out over SSE; the UI refetches
   within about a second of a real change (`docker stop` from another
@@ -28,12 +52,16 @@ a React/TypeScript frontend, shipped as a single binary.
   container-list call, not one call per event. Interval polling only exists
   as a safety net in case an event is missed.
 - **Real CPU% / memory metrics** — computed with the same delta formula
-  `docker stats` uses, via the Docker SDK's one-shot stats API.
-- **Login required** — first launch walks you through creating a single
-  admin account; every `/api/*` route is behind that session except the
-  bootstrap endpoints themselves. See [Security](#security) below.
-- **Light / dark theme + accent color** — persisted per browser, no rebuild
-  needed to switch.
+  `docker stats` uses. One `GET /api/stats` call returns the whole fleet
+  (fanned out with bounded concurrency server-side), and the UI pauses
+  polling while the tab is hidden.
+- **Login required, invite-only users** — first launch creates the admin.
+  Extra people arrive through a 72-hour invite (Admin / Operator / Viewer),
+  not a public register. Viewer is `403` on mutating routes and exec, not
+  just hidden buttons. See [Security](#security) below.
+- **Light / dark theme + accent color** — "Paper" and "Graphite" themes with
+  five accent presets, persisted per browser and applied before first paint.
+  Fonts (IBM Plex) are bundled, so the app works fully offline.
 - **One binary** — the built frontend is embedded into the Go binary via
   `go:embed`; `go build` alone produces a deployable artifact.
 
@@ -43,7 +71,8 @@ DockVista follows the standard Go project layout with a clean-architecture
 split between the core domain and its adapters:
 
 ```
-cmd/dockvista/            entry point: config, DI, event bridge, graceful shutdown
+cmd/dockvista/            entry point: config, DI, event bridge, graceful shutdown, `readyz` probe
+cmd/dockvista-tray/       Windows helper: start/stop the sibling binary, open the browser
 internal/core/
   domain/                 framework-free types (Container, Image, Volume, Network, Event, User, ...)
   ports/                  interfaces the core depends on (DockerClient, ImageClient, CredentialStore, ...)
@@ -106,8 +135,18 @@ Or build the single production binary:
 
 ```bash
 make build              # builds web/, embeds it, compiles ./bin/dockvista
-./bin/dockvista          # serves the full app on :8080
+./bin/dockvista          # serves the full app on http://127.0.0.1:8080
 ```
+
+Prebuilt binaries for Linux, macOS, and Windows (amd64/arm64) are attached to
+each [GitHub release](https://github.com/faritreascodev/dockvista/releases)
+with a `SHA256SUMS` file; verify with `sha256sum -c SHA256SUMS --ignore-missing`.
+Tagged releases also push `ghcr.io/faritreascodev/dockvista` (linux/amd64 and
+arm64). Windows zips include `dockvista-tray.exe` beside the server.
+
+The binary listens on **loopback only** by default. To reach it from another
+machine, put a TLS reverse proxy in front, or set `DOCKVISTA_ADDR=:8080`
+deliberately.
 
 Without `make` (Windows PowerShell or cmd). Build the frontend first, because
 the Go binary embeds it:
@@ -132,8 +171,16 @@ docker compose down            # keeps the data volume
 ```
 
 Compose mounts the Docker socket and a named volume for `/data`, so the
-admin account survives restarts. Change the host port with
-`DOCKVISTA_PORT=9000 docker compose up -d`.
+admin account survives restarts. The port is published on `127.0.0.1` only.
+Change it with `DOCKVISTA_PORT=9000 docker compose up -d`; expose it on all
+interfaces only on purpose, with `DOCKVISTA_BIND=0.0.0.0`.
+
+TLS reverse proxy (Caddy, Secure cookies, 80/443 only — Compose 2.24+):
+
+```bash
+DOCKVISTA_HOST=dockvista.example.com \
+  docker compose -f docker-compose.yml -f deploy/compose.tls.yml up -d
+```
 
 On Linux the container's user needs the Docker socket's group. Set it once:
 
@@ -159,32 +206,51 @@ All configuration is environment-based (see `internal/config/config.go`):
 
 | Variable                     | Default | Description                                              |
 | ----------------------------- | ------- | --------------------------------------------------------- |
-| `DOCKVISTA_ADDR`               | `:8080` | HTTP listen address                                        |
+| `DOCKVISTA_ADDR`               | `127.0.0.1:8080` | HTTP listen address. Loopback by default; the container image sets `:8080` and relies on the published port binding instead. |
 | `DOCKVISTA_POLL_INTERVAL`      | `30s`   | Background container-list refresh — a safety net; the event stream drives the real-time updates |
 | `DOCKVISTA_SHUTDOWN_TIMEOUT`   | `10s`   | Graceful shutdown drain timeout                            |
-| `DOCKVISTA_DATA_DIR`           | `./data`| Where the admin account and session signing key are stored |
+| `DOCKVISTA_DATA_DIR`           | `./data`| Accounts, invites, session key, workspace stacks, environment TLS PEMs, registry credentials |
 | `DOCKVISTA_SETUP_TOKEN`        | (generated) | Token required by `POST /api/auth/setup` on first launch. If unset, the process generates one and logs it once. |
 | `DOCKVISTA_COOKIE_SECURE`      | `false` | Set to `true` when TLS terminates at a proxy in front of DockVista, so the session cookie is marked `Secure`. |
+| `DOCKVISTA_READ_ONLY`          | `false` | Observe-only instance: lifecycle actions, create/remove/prune/pull and the terminal return `403`. Changing your own password still works. |
+| `DOCKVISTA_IDLE_TIMEOUT`       | `30m`   | Sign a session out after this much quiet. `0s` keeps the cookie until its 8-hour expiry. |
+| `DOCKVISTA_HOST`               | `localhost` | Hostname Caddy uses in `deploy/compose.tls.yml` (certificate name). |
 
 ## Security
 
 - **No default credentials, anywhere.** The admin account is created
   interactively on first launch (`POST /api/auth/setup`). That endpoint
   accepts exactly one successful call, and only with the setup token logged
-  at startup (or supplied via `DOCKVISTA_SETUP_TOKEN`). The password is
+  at startup (or supplied via `DOCKVISTA_SETUP_TOKEN`), and the running process
+  forgets the token once it has been used. The password (8–72 bytes, bcrypt's real limit) is
   stored bcrypt-hashed in `<DOCKVISTA_DATA_DIR>/credentials.json`
   (`0600` on Unix; Windows does not honor that mode). `data/` is gitignored.
-- **Single-user, by design — this is not a multi-tenant tool.** There is one
-  admin account per running instance, no roles, no per-user permissions.
-  It's built for "each person runs their own instance against their own
-  Docker daemon." Sessions are HMAC-signed cookies (`SameSite=Strict`,
-  `HttpOnly`) that carry a generation counter. Logout increments that
-  counter, so a copied cookie stops working. Login survives a restart as
-  long as `DOCKVISTA_DATA_DIR` persists. Set `DOCKVISTA_COOKIE_SECURE=true`
-  when a reverse proxy terminates TLS; the process itself does not.
+- **Password change revokes other sessions.** Settings → Password (or
+  `POST /api/auth/password`) re-checks the current password, bumps the
+  session generation so every other cookie dies, and re-issues yours.
+- **Strict Content-Security-Policy.** `script-src 'self'`, no inline
+  scripts, no third-party origins, `frame-ancestors 'none'`. Fonts and all
+  assets are served from the binary itself.
+- **Invite-only, not a signup form.** The first account is an admin created
+  on setup. Everyone else needs a one-time invite from an admin (Admin /
+  Operator / Viewer). Viewer cannot mutate Docker or open a shell — the API
+  returns `403`, the UI only hides the buttons. Operator can run lifecycle
+  and cleanup, not manage users. Logout and password/role changes revoke
+  **that user's** sessions; other people stay signed in. Sessions are
+  HMAC-signed cookies (`SameSite=Strict`, `HttpOnly`) with a generation
+  counter, a 30-minute idle timeout, and at most five live cookies per user.
+  Eight failed logins from one address lock that username for 15 minutes.
+  Mutating requests must send an `Origin` (or `Referer`) that matches this
+  host — SameSite alone is not enough behind some proxies. Auth and
+  destructive calls append to `audit.log` in the data dir. Login survives a
+  restart as long as `DOCKVISTA_DATA_DIR` persists. Set
+  `DOCKVISTA_COOKIE_SECURE=true` when a reverse proxy terminates TLS; the
+  process itself does not. Environments are extra daemons you already
+  trust, not a multi-tenant SaaS.
 - **No CORS, on purpose.** The API and the built frontend are always served
-  from the same origin (in dev, Vite's proxy makes it so too), so there's no
-  legitimate cross-origin caller and nothing to allow-list.
+  from the same origin (in dev, Vite's proxy keeps the browser Host so the
+  Origin check still matches), so there's no legitimate cross-origin caller
+  and nothing to allow-list.
 - **The login wall gates access to the daemon, not actions within it.**
   Once authenticated, there's no sandboxing on what a container can be
   created with (bind mounts, environment, etc.) or which container the
@@ -211,23 +277,23 @@ make tidy    # go mod tidy + npm install
 Implemented:
 
 - [x] Containers — full CRUD, live logs, interactive terminal, Inspect
+- [x] Files, Bind mounts, and writable-layer Changes (`docker diff`)
 - [x] Images, Volumes, Networks — list/create/pull/remove/prune
-- [x] Compose — read-only grouping by project label
+- [x] Compose — grouping by project label with stack-wide start/stop
 - [x] Real-time updates via the Docker event stream
-- [x] Login / session auth
+- [x] Login / session auth, password change, CSP, loopback-by-default
+- [x] Overview: fleet stats, `docker system df`, engine info, activity feed
+- [x] Command palette, read-only mode, terminal shell auto-detection
+- [x] Storage: itemized disk usage, safe presets, typed confirm before delete
+- [x] Tagged releases with checksummed binaries for six platforms
+- [x] Invite-only RBAC (Admin / Operator / Viewer)
+- [x] CSRF Origin check, login lockout, idle sessions, `audit.log`
+- [x] GHCR image, `/readyz`, TLS compose overlay, Windows tray launcher
+- [x] Named environments (local + TCP+TLS), workspace Compose up/down, image history, volume browse, private registries
 
-Intentionally not implemented — these need either a fundamentally different
-deployment model or scope this project doesn't take on:
-
-- [ ] Full `docker compose up/down` orchestration — would need host
-      filesystem access to compose files and the `compose` CLI plugin
-      bundled into the (currently distroless, shell-less) runtime image, a
-      different trust and deployment model than "just needs the socket."
-- [ ] Multi-user accounts / roles — see [Security](#security); the current
-      model is one admin per instance.
-- [ ] Shell auto-detection for the terminal (`/bin/bash` → `/bin/sh` →
-      fallback) — it always tries `/bin/sh`; a `FROM scratch` image with no
-      shell surfaces as a clear error instead.
+The rest of the backlog (git into the stack workspace, Swarm) lives in
+[docs/ROADMAP.md](docs/ROADMAP.md). That file is the one source of truth
+for what we will and will not take on.
 
 ## Contributing
 

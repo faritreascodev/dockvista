@@ -25,7 +25,7 @@ type networkHandlers struct {
 }
 
 func (h *networkHandlers) handleList(w http.ResponseWriter, r *http.Request) {
-	networks, err := h.svc.List(r.Context())
+	networks, err := h.s(r).List(r.Context())
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -50,7 +50,7 @@ func (h *networkHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	n, err := h.svc.Create(r.Context(), req.Name, req.Driver, req.Labels)
+	n, err := h.s(r).Create(r.Context(), req.Name, req.Driver, req.Labels)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -65,7 +65,7 @@ func (h *networkHandlers) handleRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Remove(r.Context(), id); err != nil {
+	if err := h.s(r).Remove(r.Context(), id); err != nil {
 		writeServiceError(w, err)
 		return
 	}
@@ -89,7 +89,7 @@ func (h *networkHandlers) handleConnect(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if err := h.svc.Connect(r.Context(), req.NetworkID, req.ContainerID); err != nil {
+	if err := h.s(r).Connect(r.Context(), req.NetworkID, req.ContainerID); err != nil {
 		writeServiceError(w, err)
 		return
 	}
@@ -107,7 +107,7 @@ func (h *networkHandlers) handleDisconnect(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := h.svc.Disconnect(r.Context(), req.NetworkID, req.ContainerID, req.Force); err != nil {
+	if err := h.s(r).Disconnect(r.Context(), req.NetworkID, req.ContainerID, req.Force); err != nil {
 		writeServiceError(w, err)
 		return
 	}
@@ -115,7 +115,7 @@ func (h *networkHandlers) handleDisconnect(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *networkHandlers) handlePrune(w http.ResponseWriter, r *http.Request) {
-	deleted, err := h.svc.Prune(r.Context())
+	deleted, err := h.s(r).Prune(r.Context())
 	if err != nil {
 		writeServiceError(w, err)
 		return

@@ -1,38 +1,30 @@
-import { getContainerStats } from "../api/client";
+import { createContext, useContext } from "react";
 import type { ContainerStats } from "../types/domain";
-import { usePolling } from "./usePolling";
 
-const POLL_INTERVAL_MS = 3000;
+export interface FleetStats {
+  /** Latest sample per running container. */
+  statsById: Record<string, ContainerStats>;
+  /** Rolling CPU% history per container, oldest first. */
+  cpuSeriesById: Record<string, number[]>;
+  /** Rolling fleet totals, oldest first. */
+  totals: { cpu: number[]; memoryBytes: number[] };
+  error: Error | undefined;
+  loading: boolean;
+}
+
+export const FleetStatsContext = createContext<FleetStats>({
+  statsById: {},
+  cpuSeriesById: {},
+  totals: { cpu: [], memoryBytes: [] },
+  error: undefined,
+  loading: true,
+});
 
 /**
- * Polls live stats for every given (running) container in parallel, once
- * per interval, and returns them keyed by container ID. Centralizing this
- * in one poller — rather than one per table row — means the table and the
- * detail drawer share a single set of requests instead of duplicating them.
+ * Live resource usage for every running container. One provider polls
+ * GET /api/stats for the whole app, so the table, the drawer, and the
+ * overview charts all read the same samples instead of each polling.
  */
-export function useFleetStats(runningIds: string[]) {
-  const idsKey = [...runningIds].sort().join(",");
-
-  const { data, error, loading } = usePolling(
-    async () => {
-      const entries = await Promise.all(
-        runningIds.map(async (id): Promise<[string, ContainerStats] | null> => {
-          try {
-            return [id, await getContainerStats(id)];
-          } catch {
-            return null;
-          }
-        }),
-      );
-      const byId: Record<string, ContainerStats> = {};
-      for (const entry of entries) {
-        if (entry) byId[entry[0]] = entry[1];
-      }
-      return byId;
-    },
-    runningIds.length > 0 ? POLL_INTERVAL_MS : null,
-    [idsKey],
-  );
-
-  return { statsById: data ?? {}, error, loading };
+export function useFleetStats(): FleetStats {
+  return useContext(FleetStatsContext);
 }

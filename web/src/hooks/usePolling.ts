@@ -22,12 +22,14 @@ export function usePolling<T>(
   const [loading, setLoading] = useState(true);
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
+  const dataRef = useRef(data);
+  dataRef.current = data;
 
   useEffect(() => {
     if (intervalMs === null) return;
 
     let cancelled = false;
-    setLoading(true);
+    if (!dataRef.current) setLoading(true);
 
     const tick = () => {
       fetcherRef

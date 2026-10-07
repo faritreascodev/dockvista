@@ -1,7 +1,13 @@
 import { useRef, useState } from "react";
 import { useLiveEvents } from "./useLiveEvents";
 import type { DockerEvent } from "../types/domain";
-import { EventsContext, ZERO_COUNTERS, type EventCounters, type ResourceType } from "./resourceRefresh";
+import {
+  EventsContext,
+  RecentEventsContext,
+  ZERO_COUNTERS,
+  type EventCounters,
+  type ResourceType,
+} from "./resourceRefresh";
 
 const KNOWN_TYPES = new Set<ResourceType>(["container", "image", "volume", "network"]);
 
@@ -44,13 +50,17 @@ function isRelevantEvent(event: DockerEvent): boolean {
 // into a single counter bump instead of firing on every one.
 const COALESCE_WINDOW_MS = 500;
 
+const RECENT_EVENTS_LIMIT = 40;
+
 export function EventsProvider({ children }: { children: React.ReactNode }) {
   const [counters, setCounters] = useState<EventCounters>(ZERO_COUNTERS);
+  const [recent, setRecent] = useState<DockerEvent[]>([]);
   const pendingRef = useRef<Partial<Record<ResourceType, number>>>({});
 
   useLiveEvents((event: DockerEvent) => {
     if (!KNOWN_TYPES.has(event.type as ResourceType) || !isRelevantEvent(event)) return;
     const type = event.type as ResourceType;
+    setRecent((prev) => [event, ...prev].slice(0, RECENT_EVENTS_LIMIT));
 
     if (pendingRef.current[type] === undefined) {
       pendingRef.current[type] = window.setTimeout(() => {
@@ -60,5 +70,9 @@ export function EventsProvider({ children }: { children: React.ReactNode }) {
     }
   });
 
-  return <EventsContext.Provider value={counters}>{children}</EventsContext.Provider>;
+  return (
+    <EventsContext.Provider value={counters}>
+      <RecentEventsContext.Provider value={recent}>{children}</RecentEventsContext.Provider>
+    </EventsContext.Provider>
+  );
 }

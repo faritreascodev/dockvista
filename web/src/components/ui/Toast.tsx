@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { createPortal } from "react-dom";
-import { CheckCircle2, XCircle, X } from "lucide-react";
+import { CheckCircle2, Info, XCircle, X } from "lucide-react";
 import { ToastContext, type ToastKind } from "./toastContext";
 
 interface ToastItem {
@@ -19,7 +19,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     setToasts((prev) => [...prev, { id, kind, message }]);
     window.setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 5000);
+    }, kind === "info" ? 8000 : 5000);
   }, []);
 
   const dismiss = (id: number) => setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -32,16 +32,15 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           {toasts.map((t) => (
             <div
               key={t.id}
-              className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 text-sm shadow-lg backdrop-blur ${
-                t.kind === "success"
-                  ? "border-emerald-300 bg-emerald-50/95 text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/90 dark:text-emerald-200"
-                  : "border-rose-300 bg-rose-50/95 text-rose-800 dark:border-rose-900/50 dark:bg-rose-950/90 dark:text-rose-200"
-              }`}
+              role="status"
+              className="flex items-start gap-2.5 rounded-lg border border-edge-strong bg-panel px-3 py-2.5 text-sm text-ink shadow-xl animate-rise-in"
             >
               {t.kind === "success" ? (
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ok" />
+              ) : t.kind === "info" ? (
+                <Info className="mt-0.5 h-4 w-4 shrink-0 text-info" />
               ) : (
-                <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-bad" />
               )}
               <span className="flex-1">{t.message}</span>
               <button onClick={() => dismiss(t.id)} aria-label="Dismiss" className="shrink-0 opacity-60 hover:opacity-100">

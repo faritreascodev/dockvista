@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"dockvista/internal/core/domain"
 	"dockvista/internal/core/ports"
@@ -48,4 +49,28 @@ func (s *VolumeService) Prune(ctx context.Context) (deleted int, spaceReclaimed 
 		return 0, 0, fmt.Errorf("service: prune volumes: %w", err)
 	}
 	return deleted, spaceReclaimed, nil
+}
+
+func (s *VolumeService) ListFiles(ctx context.Context, name, relPath string) (domain.DirListing, error) {
+	listing, err := s.docker.ListVolumeDir(ctx, name, relPath)
+	if err != nil {
+		return domain.DirListing{}, fmt.Errorf("service: volume files: %w", err)
+	}
+	return listing, nil
+}
+
+func (s *VolumeService) FileStat(ctx context.Context, name, relPath string) (domain.FSEntry, error) {
+	entry, err := s.docker.StatVolumePath(ctx, name, relPath)
+	if err != nil {
+		return domain.FSEntry{}, fmt.Errorf("service: volume stat: %w", err)
+	}
+	return entry, nil
+}
+
+func (s *VolumeService) FileContent(ctx context.Context, name, relPath string) (io.ReadCloser, domain.FSEntry, error) {
+	rc, entry, err := s.docker.CopyVolumeFile(ctx, name, relPath)
+	if err != nil {
+		return nil, domain.FSEntry{}, fmt.Errorf("service: volume content: %w", err)
+	}
+	return rc, entry, nil
 }

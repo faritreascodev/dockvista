@@ -32,6 +32,7 @@ const stopGraceSeconds = 10
 // Client wraps the official Docker SDK client.
 type Client struct {
 	sdk *dockerclient.Client
+	cpu *cpuTracker
 }
 
 // New connects to the Docker daemon using the standard environment
@@ -45,7 +46,29 @@ func New() (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("docker: connect to daemon: %w", err)
 	}
-	return &Client{sdk: sdk}, nil
+	return wrapSDK(sdk), nil
+}
+
+// NewTCP connects to a remote daemon over TCP. caPEMPath/certPEMPath/keyPEMPath
+// are filesystem paths to PEM files; empty ca skips TLS (plain tcp — only
+// for a lab you already trust).
+func NewTCP(host, caPEMPath, certPEMPath, keyPEMPath string) (*Client, error) {
+	opts := []dockerclient.Opt{
+		dockerclient.WithHost(host),
+		dockerclient.WithAPIVersionNegotiation(),
+	}
+	if caPEMPath != "" {
+		opts = append(opts, dockerclient.WithTLSClientConfig(caPEMPath, certPEMPath, keyPEMPath))
+	}
+	sdk, err := dockerclient.NewClientWithOpts(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("docker: connect to tcp daemon: %w", err)
+	}
+	return wrapSDK(sdk), nil
+}
+
+func wrapSDK(sdk *dockerclient.Client) *Client {
+	return &Client{sdk: sdk, cpu: newCPUTracker()}
 }
 
 // Close releases the underlying HTTP transport.
@@ -106,13 +129,19 @@ func (c *Client) ContainerStats(ctx context.Context, id string) (domain.Stats, e
 	}
 
 	usage := memoryUsage(raw)
+	rx, tx := networkBytes(raw)
+	bread, bwrite := blkioBytes(raw)
 	return domain.Stats{
-		ContainerID:   id,
-		CPUPercent:    cpuPercent(raw),
-		MemoryUsage:   usage,
-		MemoryLimit:   raw.MemoryStats.Limit,
-		MemoryPercent: memoryPercent(usage, raw.MemoryStats.Limit),
-		SampledAt:     time.Now().UTC(),
+		ContainerID:     id,
+		CPUPercent:      c.cpu.percent(id, raw, time.Now()),
+		MemoryUsage:     usage,
+		MemoryLimit:     raw.MemoryStats.Limit,
+		MemoryPercent:   memoryPercent(usage, raw.MemoryStats.Limit),
+		NetRxBytes:      rx,
+		NetTxBytes:      tx,
+		BlockReadBytes:  bread,
+		BlockWriteBytes: bwrite,
+		SampledAt:       time.Now().UTC(),
 	}, nil
 }
 
@@ -171,13 +200,14 @@ func (c *Client) RestartContainer(ctx context.Context, id string) error {
 // StreamLogs opens a live stdout/stderr stream. The caller's context governs
 // how long the stream stays open; closing it (e.g. on client disconnect)
 // stops the underlying read promptly instead of leaking a goroutine.
-func (c *Client) StreamLogs(ctx context.Context, id string, tail string) (io.ReadCloser, error) {
+func (c *Client) StreamLogs(ctx context.Context, id string, opts domain.LogStreamOptions) (io.ReadCloser, error) {
 	out, err := c.sdk.ContainerLogs(ctx, id, container.LogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
-		Follow:     true,
-		Tail:       tail,
-		Timestamps: false,
+		Follow:     opts.Follow,
+		Tail:       opts.Tail,
+		Timestamps: opts.Timestamps,
+		Since:      opts.Since,
 	})
 	if err != nil {
 		return nil, wrapErr("stream container logs", err)

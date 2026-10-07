@@ -28,7 +28,15 @@ COPY --from=go-build /out/dockvista /usr/local/bin/dockvista
 # nonroot process could then not create the session secret.
 COPY --from=go-build --chown=65532:65532 /data /data
 ENV DOCKVISTA_DATA_DIR=/data
+# The binary defaults to loopback, which is unreachable through a published
+# port. Inside the container the network namespace is the boundary, so bind
+# all interfaces here and restrict exposure with `-p 127.0.0.1:8080:8080`.
+ENV DOCKVISTA_ADDR=:8080
 EXPOSE 8080
+# Distroless has no shell or curl; the binary probes itself. /readyz pings
+# the Docker daemon; /healthz (process up) is a separate public route.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=15s --retries=3 \
+  CMD ["/usr/local/bin/dockvista", "readyz"]
 ENTRYPOINT ["/usr/local/bin/dockvista"]
 
 # Run with the host's Docker socket mounted and a named volume for /data so
@@ -37,8 +45,9 @@ ENTRYPOINT ["/usr/local/bin/dockvista"]
 # Docker API can do. The image runs as a non-root user, which by default
 # gets "permission denied" against a socket owned by the host's docker
 # group — pass that group's GID explicitly instead of loosening the
-# socket's permissions:
-#   docker run -p 8080:8080 \
+# socket's permissions (GNU stat shown; on macOS hosts use `stat -f '%g'`,
+# and Docker Desktop's socket is GID 0):
+#   docker run -p 127.0.0.1:8080:8080 \
 #     --group-add "$(stat -c '%g' /var/run/docker.sock)" \
 #     -v /var/run/docker.sock:/var/run/docker.sock:ro \
 #     -v dockvista-data:/data dockvista

@@ -1,0 +1,8 @@
+# Reverse proxy for DockVista. Host is passed through so the Origin check
+# on mutating routes still matches the browser. flush_interval -1 keeps
+# SSE (events, logs) and the exec websocket from buffering.
+{$DOCKVISTA_HOST:localhost} {
+	reverse_proxy dockvista:8080 {
+		flush_interval -1
+	}
+}

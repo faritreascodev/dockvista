@@ -1,0 +1,40 @@
+# TLS in front of DockVista. From the repo root:
+#   DOCKVISTA_HOST=dockvista.example.com \
+#     docker compose -f docker-compose.yml -f deploy/compose.tls.yml up -d
+#
+# This overlay drops the loopback HTTP publish and marks the session cookie
+# Secure. Do not append this file in a way that keeps 8080 open — a Secure
+# cookie is never sent on plain HTTP, so that port would look "broken".
+# Compose 2.24+ is required for `!reset`.
+#
+# Caddy issues a certificate for DOCKVISTA_HOST (Let's Encrypt on a public
+# name; localhost uses Caddy's internal CA). Point DNS at this machine
+# before the first start.
+
+services:
+  dockvista:
+    ports: !reset []
+    environment:
+      DOCKVISTA_COOKIE_SECURE: "true"
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "${DOCKVISTA_TLS_BIND:-0.0.0.0}:80:80"
+      - "${DOCKVISTA_TLS_BIND:-0.0.0.0}:443:443"
+    environment:
+      DOCKVISTA_HOST: "${DOCKVISTA_HOST:-localhost}"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      dockvista:
+        condition: service_healthy
+
+volumes:
+  caddy-data:
+  caddy-config:

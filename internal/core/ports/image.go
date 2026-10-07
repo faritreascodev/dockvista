@@ -15,6 +15,8 @@ type ImageClient interface {
 	RemoveImage(ctx context.Context, id string, force bool) error
 	// PullImage streams the daemon's newline-delimited pull progress. The
 	// caller owns the returned ReadCloser and must Close it.
-	PullImage(ctx context.Context, ref string) (io.ReadCloser, error)
+	// registryAuth is Docker's X-Registry-Auth payload, or empty.
+	PullImage(ctx context.Context, ref, registryAuth string) (io.ReadCloser, error)
+	ImageHistory(ctx context.Context, id string) ([]domain.ImageLayer, error)
 	PruneImages(ctx context.Context) (deleted int, spaceReclaimed uint64, err error)
 }

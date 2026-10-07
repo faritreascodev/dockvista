@@ -21,6 +21,9 @@ type createContainerRequest struct {
 	Ports         []portBindingRequest `json:"ports"`
 	Binds         []string             `json:"binds"`
 	RestartPolicy string               `json:"restartPolicy"`
+	Command       string               `json:"command"`
+	Network       string               `json:"network"`
+	MemoryBytes   int64                `json:"memoryBytes"`
 }
 
 func (h *handlers) handleCreateContainer(w http.ResponseWriter, r *http.Request) {
@@ -63,13 +66,20 @@ func (h *handlers) handleCreateContainer(w http.ResponseWriter, r *http.Request)
 		})
 	}
 
-	id, started, err := h.svc.Create(r.Context(), domain.ContainerSpec{
+	var cmd []string
+	if req.Command != "" {
+		cmd = []string{"/bin/sh", "-c", req.Command}
+	}
+	id, started, err := h.c(r).Create(r.Context(), domain.ContainerSpec{
 		Image:         req.Image,
 		Name:          req.Name,
 		Env:           req.Env,
 		Ports:         ports,
 		Binds:         req.Binds,
 		RestartPolicy: req.RestartPolicy,
+		Cmd:           cmd,
+		Network:       req.Network,
+		MemoryBytes:   req.MemoryBytes,
 	})
 	if err != nil {
 		if id != "" {
@@ -95,7 +105,7 @@ func (h *handlers) handleRemoveContainer(w http.ResponseWriter, r *http.Request)
 	}
 	force := r.URL.Query().Get("force") == "true"
 
-	if err := h.svc.Remove(r.Context(), id, force); err != nil {
+	if err := h.c(r).Remove(r.Context(), id, force); err != nil {
 		writeServiceError(w, err)
 		return
 	}
@@ -112,7 +122,7 @@ func (h *handlers) handleInspectContainer(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	raw, err := h.svc.Inspect(r.Context(), id)
+	raw, err := h.c(r).Inspect(r.Context(), id)
 	if err != nil {
 		writeServiceError(w, err)
 		return

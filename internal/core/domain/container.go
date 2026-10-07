@@ -54,22 +54,39 @@ type ContainerSpec struct {
 	Ports         []PortBinding
 	Binds         []string // "hostPath:containerPath[:ro]", Docker's own format
 	RestartPolicy string   // "no", "always", "on-failure", "unless-stopped"
+	Cmd           []string
+	Labels        map[string]string
+	Network       string
+	MemoryBytes   int64
 }
 
 // Stats holds a single point-in-time resource usage sample for a container.
 type Stats struct {
-	ContainerID   string    `json:"containerId"`
-	CPUPercent    float64   `json:"cpuPercent"`
-	MemoryUsage   uint64    `json:"memoryUsageBytes"`
-	MemoryLimit   uint64    `json:"memoryLimitBytes"`
-	MemoryPercent float64   `json:"memoryPercent"`
-	SampledAt     time.Time `json:"sampledAt"`
+	ContainerID     string    `json:"containerId"`
+	CPUPercent      float64   `json:"cpuPercent"`
+	MemoryUsage     uint64    `json:"memoryUsageBytes"`
+	MemoryLimit     uint64    `json:"memoryLimitBytes"`
+	MemoryPercent   float64   `json:"memoryPercent"`
+	NetRxBytes      uint64    `json:"netRxBytes"`
+	NetTxBytes      uint64    `json:"netTxBytes"`
+	BlockReadBytes  uint64    `json:"blockReadBytes"`
+	BlockWriteBytes uint64    `json:"blockWriteBytes"`
+	SampledAt       time.Time `json:"sampledAt"`
+}
+
+// LogStreamOptions is what StreamLogs sends to the daemon.
+type LogStreamOptions struct {
+	Tail       string
+	Follow     bool
+	Timestamps bool
+	Since      string
 }
 
 // LogLine is a single line emitted by a container's stdout/stderr stream.
 type LogLine struct {
-	Stream  string `json:"stream"` // "stdout" or "stderr"
-	Message string `json:"message"`
+	Stream    string `json:"stream"` // "stdout" or "stderr"
+	Message   string `json:"message"`
+	Timestamp string `json:"timestamp,omitempty"`
 }
 
 // EngineInfo describes the Docker daemon DockVista is connected to.

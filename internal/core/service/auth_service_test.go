@@ -11,34 +11,126 @@ import (
 // fakeCredentialStore implements ports.CredentialStore in memory, mirroring
 // the fakeDocker pattern used for the container service tests.
 type fakeCredentialStore struct {
-	user *domain.User
+	users   []domain.User
+	invites []domain.Invite
+}
+
+func (f *fakeCredentialStore) find(username string) int {
+	for i, u := range f.users {
+		if u.Username == username {
+			return i
+		}
+	}
+	return -1
 }
 
 func (f *fakeCredentialStore) IsInitialized() (bool, error) {
-	return f.user != nil, nil
+	return len(f.users) > 0, nil
 }
 
 func (f *fakeCredentialStore) CreateAdmin(user domain.User) error {
-	if f.user != nil {
+	if len(f.users) > 0 {
 		return domain.ErrAlreadyInitialized
 	}
-	f.user = &user
+	if user.Role == "" {
+		user.Role = domain.RoleAdmin
+	}
+	f.users = []domain.User{user}
+	return nil
+}
+
+func (f *fakeCredentialStore) CreateUser(user domain.User) error {
+	if f.find(user.Username) >= 0 {
+		return domain.ErrUserExists
+	}
+	f.users = append(f.users, user)
 	return nil
 }
 
 func (f *fakeCredentialStore) GetUser(username string) (domain.User, bool, error) {
-	if f.user == nil || f.user.Username != username {
+	i := f.find(username)
+	if i < 0 {
 		return domain.User{}, false, nil
 	}
-	return *f.user, true, nil
+	return f.users[i], true, nil
 }
 
-func (f *fakeCredentialStore) BumpSessionGeneration() (uint64, error) {
-	if f.user == nil {
+func (f *fakeCredentialStore) ListUsers() ([]domain.User, error) {
+	out := make([]domain.User, len(f.users))
+	copy(out, f.users)
+	return out, nil
+}
+
+func (f *fakeCredentialStore) DeleteUser(username string) error {
+	i := f.find(username)
+	if i < 0 {
+		return domain.ErrNotFound
+	}
+	f.users = append(f.users[:i], f.users[i+1:]...)
+	return nil
+}
+
+func (f *fakeCredentialStore) BumpSessionGeneration(username string) (uint64, error) {
+	i := f.find(username)
+	if i < 0 {
 		return 0, domain.ErrUnauthorized
 	}
-	f.user.SessionGeneration++
-	return f.user.SessionGeneration, nil
+	f.users[i].SessionGeneration++
+	return f.users[i].SessionGeneration, nil
+}
+
+func (f *fakeCredentialStore) UpdatePassword(username, hash string) (uint64, error) {
+	i := f.find(username)
+	if i < 0 {
+		return 0, domain.ErrUnauthorized
+	}
+	f.users[i].PasswordHash = hash
+	f.users[i].SessionGeneration++
+	return f.users[i].SessionGeneration, nil
+}
+
+func (f *fakeCredentialStore) UpdateRole(username string, role domain.Role) (uint64, error) {
+	i := f.find(username)
+	if i < 0 {
+		return 0, domain.ErrUnauthorized
+	}
+	f.users[i].Role = role
+	f.users[i].SessionGeneration++
+	return f.users[i].SessionGeneration, nil
+}
+
+func (f *fakeCredentialStore) SaveInvite(invite domain.Invite) error {
+	f.invites = append(f.invites, invite)
+	return nil
+}
+
+func (f *fakeCredentialStore) ListInvites() ([]domain.Invite, error) {
+	out := make([]domain.Invite, len(f.invites))
+	copy(out, f.invites)
+	return out, nil
+}
+
+func (f *fakeCredentialStore) AcceptInvite(tokenHash string, user domain.User) error {
+	now := time.Now().UTC()
+	for i := range f.invites {
+		inv := &f.invites[i]
+		if inv.TokenHash != tokenHash {
+			continue
+		}
+		if inv.Used() || now.After(inv.ExpiresAt) {
+			return domain.ErrInviteInvalid
+		}
+		if f.find(user.Username) >= 0 {
+			return domain.ErrUserExists
+		}
+		if user.Role == "" {
+			user.Role = inv.Role
+		}
+		inv.UsedAt = now
+		f.users = append(f.users, user)
+		return nil
+	}
+	return domain.ErrInviteInvalid
 }
 
 func newTestAuthService() *AuthService {
@@ -71,12 +163,12 @@ func TestAuthService_SetupThenLogin(t *testing.T) {
 		t.Fatal("expected expiry in the future")
 	}
 
-	username, err := svc.VerifySession(token)
+	p, err := svc.VerifySession(token)
 	if err != nil {
 		t.Fatalf("VerifySession: %v", err)
 	}
-	if username != "admin" {
-		t.Fatalf("expected username 'admin', got %q", username)
+	if p.Username != "admin" || p.Role != domain.RoleAdmin {
+		t.Fatalf("principal = %+v, want admin/admin", p)
 	}
 }
 
@@ -121,10 +213,7 @@ func TestAuthService_VerifySession_RejectsTamperedToken(t *testing.T) {
 func TestAuthService_VerifySession_RejectsExpiredToken(t *testing.T) {
 	svc := newTestAuthService()
 
-	// White-box: sign a token that already expired a minute ago, bypassing
-	// the fixed 24h SessionDuration so the expiry branch is actually
-	// exercised instead of just re-testing signature tampering.
-	expired, err := svc.sign("admin", time.Now().Add(-time.Minute), 1)
+	expired, _, err := svc.sign("admin", time.Now().Add(-time.Minute), 1)
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
@@ -150,7 +239,7 @@ func TestAuthService_RevokeSessionsInvalidatesToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Login: %v", err)
 	}
-	if err := svc.RevokeSessions(); err != nil {
+	if err := svc.RevokeSessions("admin"); err != nil {
 		t.Fatalf("RevokeSessions: %v", err)
 	}
 	if _, err := svc.VerifySession(token); !errors.Is(err, domain.ErrUnauthorized) {
@@ -168,8 +257,6 @@ func TestAuthService_VerifySession_RejectsMalformedToken(t *testing.T) {
 	}
 }
 
-// countingCredentialStore counts reads so tests can prove verification is
-// served from the service's cache after the first request.
 type countingCredentialStore struct {
 	fakeCredentialStore
 	getUserCalls int
@@ -211,11 +298,10 @@ func TestAuthService_RevokeInvalidatesCachedSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Login: %v", err)
 	}
-	// Prime the cache, then revoke: the cached generation must move too.
 	if _, err := svc.VerifySession(token); err != nil {
 		t.Fatalf("VerifySession before revoke: %v", err)
 	}
-	if err := svc.RevokeSessions(); err != nil {
+	if err := svc.RevokeSessions("admin"); err != nil {
 		t.Fatalf("RevokeSessions: %v", err)
 	}
 	if _, err := svc.VerifySession(token); !errors.Is(err, domain.ErrUnauthorized) {
@@ -227,5 +313,171 @@ func TestAuthService_RevokeInvalidatesCachedSession(t *testing.T) {
 	}
 	if _, err := svc.VerifySession(fresh); err != nil {
 		t.Fatalf("new session after revoke: %v", err)
+	}
+}
+
+func TestAuthService_InviteViewerCannotMutateOrInvite(t *testing.T) {
+	svc := newTestAuthService()
+	if err := svc.Setup("admin", "correct-horse-battery", "test-setup-token"); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	admin := domain.Principal{Username: "admin", Role: domain.RoleAdmin}
+
+	_, token, err := svc.CreateInvite(admin, domain.RoleViewer)
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+	peek, err := svc.PeekInvite(token)
+	if err != nil {
+		t.Fatalf("PeekInvite: %v", err)
+	}
+	if peek.Role != domain.RoleViewer || peek.TokenHash != "" {
+		t.Fatalf("peek = %+v, want viewer with hash stripped", peek)
+	}
+
+	if err := svc.AcceptInvite(token, "look", "viewer-password"); err != nil {
+		t.Fatalf("AcceptInvite: %v", err)
+	}
+	if err := svc.AcceptInvite(token, "look2", "viewer-password"); !errors.Is(err, domain.ErrInviteInvalid) {
+		t.Fatalf("reused invite: %v, want ErrInviteInvalid", err)
+	}
+
+	lookTok, _, err := svc.Login("look", "viewer-password")
+	if err != nil {
+		t.Fatalf("viewer login: %v", err)
+	}
+	p, err := svc.VerifySession(lookTok)
+	if err != nil {
+		t.Fatalf("VerifySession: %v", err)
+	}
+	if p.Role.CanMutate() || p.Role.CanManageUsers() {
+		t.Fatalf("viewer principal = %+v", p)
+	}
+
+	if _, _, err := svc.CreateInvite(p, domain.RoleOperator); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("viewer invite: %v, want ErrForbidden", err)
+	}
+}
+
+func TestAuthService_OperatorCannotManageUsers(t *testing.T) {
+	svc := newTestAuthService()
+	if err := svc.Setup("admin", "correct-horse-battery", "test-setup-token"); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	admin := domain.Principal{Username: "admin", Role: domain.RoleAdmin}
+	_, token, err := svc.CreateInvite(admin, domain.RoleOperator)
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+	if err := svc.AcceptInvite(token, "ops", "operator-password"); err != nil {
+		t.Fatalf("AcceptInvite: %v", err)
+	}
+
+	ops := domain.Principal{Username: "ops", Role: domain.RoleOperator}
+	if !ops.Role.CanMutate() {
+		t.Fatal("operator should mutate docker")
+	}
+	if _, _, err := svc.CreateInvite(ops, domain.RoleViewer); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("operator invite: %v, want ErrForbidden", err)
+	}
+	if err := svc.DeleteUser(ops, "admin"); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("operator delete: %v, want ErrForbidden", err)
+	}
+}
+
+func TestAuthService_CannotRemoveLastAdmin(t *testing.T) {
+	svc := newTestAuthService()
+	if err := svc.Setup("admin", "correct-horse-battery", "test-setup-token"); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	admin := domain.Principal{Username: "admin", Role: domain.RoleAdmin}
+	if err := svc.DeleteUser(admin, "admin"); !errors.Is(err, domain.ErrForbidden) {
+		t.Fatalf("self-delete: %v, want ErrForbidden", err)
+	}
+	if err := svc.SetRole(admin, "admin", domain.RoleViewer); !errors.Is(err, domain.ErrLastAdmin) {
+		t.Fatalf("demote last admin: %v, want ErrLastAdmin", err)
+	}
+}
+
+func TestAuthService_LogoutDoesNotKickOtherUsers(t *testing.T) {
+	svc := newTestAuthService()
+	if err := svc.Setup("admin", "correct-horse-battery", "test-setup-token"); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	admin := domain.Principal{Username: "admin", Role: domain.RoleAdmin}
+	_, token, err := svc.CreateInvite(admin, domain.RoleOperator)
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+	if err := svc.AcceptInvite(token, "ops", "operator-password"); err != nil {
+		t.Fatalf("AcceptInvite: %v", err)
+	}
+
+	adminTok, _, err := svc.Login("admin", "correct-horse-battery")
+	if err != nil {
+		t.Fatalf("admin login: %v", err)
+	}
+	opsTok, _, err := svc.Login("ops", "operator-password")
+	if err != nil {
+		t.Fatalf("ops login: %v", err)
+	}
+	if err := svc.RevokeSessions("ops"); err != nil {
+		t.Fatalf("RevokeSessions: %v", err)
+	}
+	if _, err := svc.VerifySession(opsTok); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("ops token after logout: %v", err)
+	}
+	if _, err := svc.VerifySession(adminTok); err != nil {
+		t.Fatalf("admin token after ops logout: %v", err)
+	}
+}
+
+func TestAuthService_IdleTimeoutExpiresSession(t *testing.T) {
+	svc := newTestAuthService()
+	svc.ConfigureSessions(50*time.Millisecond, 5)
+	if err := svc.Setup("admin", "correct-horse-battery", "test-setup-token"); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	token, _, err := svc.Login("admin", "correct-horse-battery")
+	if err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+	if _, err := svc.VerifySession(token); err != nil {
+		t.Fatalf("fresh session: %v", err)
+	}
+	time.Sleep(120 * time.Millisecond)
+	if _, err := svc.VerifySession(token); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("idle session: %v, want ErrUnauthorized", err)
+	}
+}
+
+func TestAuthService_SessionCapDropsOldest(t *testing.T) {
+	svc := newTestAuthService()
+	svc.ConfigureSessions(time.Hour, 2)
+	if err := svc.Setup("admin", "correct-horse-battery", "test-setup-token"); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+	first, _, err := svc.Login("admin", "correct-horse-battery")
+	if err != nil {
+		t.Fatalf("login 1: %v", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	second, _, err := svc.Login("admin", "correct-horse-battery")
+	if err != nil {
+		t.Fatalf("login 2: %v", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	third, _, err := svc.Login("admin", "correct-horse-battery")
+	if err != nil {
+		t.Fatalf("login 3: %v", err)
+	}
+	if _, err := svc.VerifySession(first); !errors.Is(err, domain.ErrUnauthorized) {
+		t.Fatalf("oldest session: %v, want ErrUnauthorized", err)
+	}
+	if _, err := svc.VerifySession(second); err != nil {
+		t.Fatalf("second session: %v", err)
+	}
+	if _, err := svc.VerifySession(third); err != nil {
+		t.Fatalf("third session: %v", err)
 	}
 }

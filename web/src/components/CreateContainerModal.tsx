@@ -3,6 +3,7 @@ import { Plus, X } from "lucide-react";
 import { ApiError, createContainer, type CreateContainerPort } from "../api/client";
 import { useToast } from "./ui/toastContext";
 import { Button } from "./ui/Button";
+import { FormError } from "./ui/Form";
 import { Modal } from "./ui/Modal";
 
 interface CreateContainerModalProps {
@@ -10,8 +11,7 @@ interface CreateContainerModalProps {
   onCreated: () => void;
 }
 
-const inputClass =
-  "w-full rounded-lg border border-edge bg-panel-2 px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:opacity-60";
+const inputClass = "field";
 
 export function CreateContainerModal({ onClose, onCreated }: CreateContainerModalProps) {
   const [image, setImage] = useState("");
@@ -20,6 +20,8 @@ export function CreateContainerModal({ onClose, onCreated }: CreateContainerModa
   const [envLines, setEnvLines] = useState("");
   const [ports, setPorts] = useState<CreateContainerPort[]>([]);
   const [bindLines, setBindLines] = useState("");
+  const [command, setCommand] = useState("");
+  const [memoryMb, setMemoryMb] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const toast = useToast();
@@ -46,6 +48,8 @@ export function CreateContainerModal({ onClose, onCreated }: CreateContainerModa
           .map((l) => l.trim())
           .filter(Boolean),
         ports: ports.filter((p) => p.hostPort && p.containerPort),
+        ...(command.trim() ? { command: command.trim() } : {}),
+        ...(memoryMb.trim() ? { memoryBytes: Number(memoryMb) * 1024 * 1024 } : {}),
       });
       toast.push("success", `Created and started container ${id.slice(0, 12)}.`);
       onCreated();
@@ -73,6 +77,7 @@ export function CreateContainerModal({ onClose, onCreated }: CreateContainerModa
   return (
     <Modal
       title="New container"
+      size="lg"
       onClose={onClose}
       footer={
         <>
@@ -85,7 +90,7 @@ export function CreateContainerModal({ onClose, onCreated }: CreateContainerModa
         </>
       }
     >
-      <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+      <div className="space-y-4">
         <div>
           <label className="mb-1 block text-xs font-medium text-ink-muted" htmlFor="cc-image">
             Image
@@ -93,11 +98,12 @@ export function CreateContainerModal({ onClose, onCreated }: CreateContainerModa
           <input
             id="cc-image"
             type="text"
+            autoFocus
             placeholder="nginx:latest"
             value={image}
             disabled={busy}
             onChange={(e) => setImage(e.target.value)}
-            className={inputClass}
+            className={`${inputClass} font-mono`}
           />
         </div>
 
@@ -180,7 +186,8 @@ export function CreateContainerModal({ onClose, onCreated }: CreateContainerModa
                   type="button"
                   onClick={() => removePort(i)}
                   disabled={busy}
-                  className="rounded p-1.5 text-ink-muted hover:text-rose-500"
+                  aria-label="Remove port mapping"
+                  className="rounded p-1.5 text-ink-muted hover:text-bad"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -188,6 +195,37 @@ export function CreateContainerModal({ onClose, onCreated }: CreateContainerModa
             ))}
             {ports.length === 0 && <p className="text-xs text-ink-faint">No ports published.</p>}
           </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-ink-muted" htmlFor="cc-cmd">
+            Command (optional)
+          </label>
+          <input
+            id="cc-cmd"
+            type="text"
+            placeholder="nginx -g 'daemon off;'"
+            value={command}
+            disabled={busy}
+            onChange={(e) => setCommand(e.target.value)}
+            className={`${inputClass} font-mono`}
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-medium text-ink-muted" htmlFor="cc-mem">
+            Memory limit (MiB, optional)
+          </label>
+          <input
+            id="cc-mem"
+            type="number"
+            min={0}
+            placeholder="512"
+            value={memoryMb}
+            disabled={busy}
+            onChange={(e) => setMemoryMb(e.target.value)}
+            className={inputClass}
+          />
         </div>
 
         <div>
@@ -223,11 +261,7 @@ export function CreateContainerModal({ onClose, onCreated }: CreateContainerModa
           </p>
         </div>
 
-        {error && (
-          <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
-            {error}
-          </div>
-        )}
+        {error && <FormError>{error}</FormError>}
       </div>
     </Modal>
   );

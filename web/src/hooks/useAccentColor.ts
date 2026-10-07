@@ -1,41 +1,47 @@
 import { useEffect, useState } from "react";
 
+/**
+ * Accent presets. The actual RGB values live in index.css under
+ * [data-accent="..."] so each preset can differ per theme; the swatch here
+ * is only what the picker renders. "signal" is the default and has no
+ * attribute rule (it is the :root / .dark value).
+ */
 export const ACCENT_PRESETS = {
-  sky: "14 165 233",
-  violet: "139 92 246",
-  emerald: "16 185 129",
-  rose: "244 63 94",
-  amber: "245 158 11",
-  teal: "20 184 166",
+  signal: "#f5a623",
+  cyan: "#22d3ee",
+  violet: "#a78bfa",
+  lime: "#a3e635",
+  coral: "#fb7185",
 } as const;
 
 export type AccentPreset = keyof typeof ACCENT_PRESETS;
 
 const STORAGE_KEY = "dockvista-accent";
+const DEFAULT_ACCENT: AccentPreset = "signal";
 
 function isPreset(value: string | null): value is AccentPreset {
-  return !!value && value in ACCENT_PRESETS;
+  return !!value && Object.prototype.hasOwnProperty.call(ACCENT_PRESETS, value);
 }
 
 /**
- * Lets the user pick an accent color from a small preset list, applied as
- * the --color-accent CSS variable (see index.css) so every `accent-*`
- * Tailwind utility picks it up without a rebuild. index.html applies the
- * stored preset before React mounts, same FOUC-avoidance approach as
- * useTheme.
+ * Lets the user pick an accent preset, applied as <html data-accent>.
+ * public/theme-init.js applies the stored preset before React mounts so
+ * the first paint already uses it.
  */
 export function useAccentColor() {
   const [accent, setAccentState] = useState<AccentPreset>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
-      return isPreset(stored) ? stored : "sky";
+      return isPreset(stored) ? stored : DEFAULT_ACCENT;
     } catch {
-      return "sky";
+      return DEFAULT_ACCENT;
     }
   });
 
   useEffect(() => {
-    document.documentElement.style.setProperty("--color-accent", ACCENT_PRESETS[accent]);
+    const root = document.documentElement;
+    if (accent === DEFAULT_ACCENT) root.removeAttribute("data-accent");
+    else root.setAttribute("data-accent", accent);
   }, [accent]);
 
   const setAccent = (next: AccentPreset) => {

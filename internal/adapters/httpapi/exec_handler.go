@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/coder/websocket"
 )
@@ -40,14 +42,14 @@ func (h *handlers) handleExec(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	execID, err := h.svc.CreateExec(ctx, id)
+	execID, err := h.c(r).CreateExec(ctx, id)
 	if err != nil {
 		h.log.Warn("exec create failed", "container", id, "error", err)
 		_ = conn.Close(websocket.StatusInternalError, "failed to start shell")
 		return
 	}
 
-	execConn, err := h.svc.AttachExec(ctx, execID)
+	execConn, err := h.c(r).AttachExec(ctx, execID)
 	if err != nil {
 		h.log.Warn("exec attach failed", "container", id, "error", err)
 		_ = conn.Close(websocket.StatusInternalError, "failed to attach shell")
@@ -56,6 +58,8 @@ func (h *handlers) handleExec(w http.ResponseWriter, r *http.Request) {
 	defer execConn.Close()
 
 	done := make(chan struct{}, 2)
+
+	go pingExec(ctx, conn, done)
 
 	// container -> browser
 	go func() {
@@ -89,10 +93,18 @@ func (h *handlers) handleExec(w http.ResponseWriter, r *http.Request) {
 				}
 			case websocket.MessageText:
 				var msg resizeMessage
-				if json.Unmarshal(data, &msg) == nil && msg.Type == "resize" && msg.Rows > 0 && msg.Cols > 0 {
-					if err := h.svc.ResizeExec(ctx, execID, msg.Rows, msg.Cols); err != nil {
-						h.log.Warn("exec resize failed", "container", id, "error", err)
+				if json.Unmarshal(data, &msg) != nil {
+					continue
+				}
+				switch msg.Type {
+				case "resize":
+					if msg.Rows > 0 && msg.Cols > 0 {
+						if err := h.c(r).ResizeExec(ctx, execID, msg.Rows, msg.Cols); err != nil {
+							h.log.Warn("exec resize failed", "container", id, "error", err)
+						}
 					}
+				case "ping":
+					// Client keepalive; the server also pings. No-op.
 				}
 			}
 		}
@@ -100,4 +112,26 @@ func (h *handlers) handleExec(w http.ResponseWriter, r *http.Request) {
 
 	<-done
 	_ = conn.Close(websocket.StatusNormalClosure, "")
+}
+
+func pingExec(ctx context.Context, conn *websocket.Conn, done chan struct{}) {
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err := conn.Ping(pingCtx)
+			cancel()
+			if err != nil {
+				select {
+				case done <- struct{}{}:
+				default:
+				}
+				return
+			}
+		}
+	}
 }

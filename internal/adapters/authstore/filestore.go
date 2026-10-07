@@ -1,6 +1,5 @@
-// Package authstore persists the single admin account and the session
-// signing secret to small JSON/binary files under a data directory, so
-// login survives a process restart without pulling in a database.
+// Package authstore persists accounts, invites, and the session signing
+// secret as small JSON/binary files under a data directory.
 package authstore
 
 import (
@@ -11,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"dockvista/internal/core/domain"
 	"dockvista/internal/core/ports"
@@ -20,7 +20,14 @@ const (
 	credentialsFile = "credentials.json"
 	secretFile      = "session_secret"
 	secretLen       = 32
+	docVersion      = 2
 )
+
+type accountDoc struct {
+	Version int             `json:"version"`
+	Users   []domain.User   `json:"users"`
+	Invites []domain.Invite `json:"invites,omitempty"`
+}
 
 // FileStore implements ports.CredentialStore against a JSON file.
 type FileStore struct {
@@ -28,8 +35,6 @@ type FileStore struct {
 	path string
 }
 
-// New ensures dataDir exists (0700) and returns a FileStore backed by
-// <dataDir>/credentials.json.
 func New(dataDir string) (*FileStore, error) {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("authstore: create data dir: %w", err)
@@ -37,50 +42,44 @@ func New(dataDir string) (*FileStore, error) {
 	return &FileStore{path: filepath.Join(dataDir, credentialsFile)}, nil
 }
 
-func (s *FileStore) read() (domain.User, bool, error) {
+func (s *FileStore) read() (accountDoc, error) {
 	data, err := os.ReadFile(s.path)
 	if errors.Is(err, os.ErrNotExist) {
-		return domain.User{}, false, nil
+		return accountDoc{Version: docVersion}, nil
 	}
 	if err != nil {
-		return domain.User{}, false, fmt.Errorf("authstore: read credentials: %w", err)
+		return accountDoc{}, fmt.Errorf("authstore: read credentials: %w", err)
 	}
-	var u domain.User
-	if err := json.Unmarshal(data, &u); err != nil {
-		return domain.User{}, false, fmt.Errorf("authstore: decode credentials: %w", err)
-	}
-	return u, true, nil
+	return parseDoc(data)
 }
 
-func (s *FileStore) IsInitialized() (bool, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	_, ok, err := s.read()
-	return ok, err
-}
-
-func (s *FileStore) CreateAdmin(user domain.User) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, ok, err := s.read(); err != nil {
-		return err
-	} else if ok {
-		return domain.ErrAlreadyInitialized
+func parseDoc(data []byte) (accountDoc, error) {
+	var doc accountDoc
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return accountDoc{}, fmt.Errorf("authstore: decode credentials: %w", err)
 	}
-
-	return s.write(user)
+	if doc.Version >= 2 && len(doc.Users) > 0 {
+		return doc, nil
+	}
+	var legacy domain.User
+	if err := json.Unmarshal(data, &legacy); err == nil && legacy.Username != "" && len(doc.Users) == 0 {
+		if legacy.Role == "" {
+			legacy.Role = domain.RoleAdmin
+		}
+		return accountDoc{Version: docVersion, Users: []domain.User{legacy}}, nil
+	}
+	if doc.Version == 0 {
+		doc.Version = docVersion
+	}
+	return doc, nil
 }
 
-func (s *FileStore) write(user domain.User) error {
-	data, err := json.Marshal(user)
+func (s *FileStore) write(doc accountDoc) error {
+	doc.Version = docVersion
+	data, err := json.Marshal(doc)
 	if err != nil {
 		return fmt.Errorf("authstore: encode credentials: %w", err)
 	}
-
-	// Write via a temp file + rename so a crash mid-write never leaves a
-	// half-written credentials.json behind.
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("authstore: write credentials: %w", err)
@@ -91,43 +90,225 @@ func (s *FileStore) write(user domain.User) error {
 	return nil
 }
 
-// BumpSessionGeneration increments the stored generation and persists it.
-// Every session token signed with the previous value stops verifying.
-func (s *FileStore) BumpSessionGeneration() (uint64, error) {
+func (s *FileStore) IsInitialized() (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	doc, err := s.read()
+	if err != nil {
+		return false, err
+	}
+	return len(doc.Users) > 0, nil
+}
+
+func (s *FileStore) CreateAdmin(user domain.User) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	user, ok, err := s.read()
+	doc, err := s.read()
 	if err != nil {
-		return 0, err
+		return err
 	}
-	if !ok {
-		return 0, domain.ErrUnauthorized
+	if len(doc.Users) > 0 {
+		return domain.ErrAlreadyInitialized
 	}
-	user.SessionGeneration++
-	if err := s.write(user); err != nil {
-		return 0, err
+	if user.Role == "" {
+		user.Role = domain.RoleAdmin
 	}
-	return user.SessionGeneration, nil
+	if user.SessionGeneration == 0 {
+		user.SessionGeneration = 1
+	}
+	if user.CreatedAt.IsZero() {
+		user.CreatedAt = time.Now().UTC()
+	}
+	doc.Users = []domain.User{user}
+	return s.write(doc)
+}
+
+func (s *FileStore) CreateUser(user domain.User) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	doc, err := s.read()
+	if err != nil {
+		return err
+	}
+	if findUser(doc.Users, user.Username) >= 0 {
+		return domain.ErrUserExists
+	}
+	if len(doc.Users) >= domain.MaxUsers {
+		return domain.ErrForbidden
+	}
+	if user.SessionGeneration == 0 {
+		user.SessionGeneration = 1
+	}
+	if user.CreatedAt.IsZero() {
+		user.CreatedAt = time.Now().UTC()
+	}
+	doc.Users = append(doc.Users, user)
+	return s.write(doc)
 }
 
 func (s *FileStore) GetUser(username string) (domain.User, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	u, ok, err := s.read()
-	if err != nil || !ok || u.Username != username {
+	doc, err := s.read()
+	if err != nil {
 		return domain.User{}, false, err
 	}
-	return u, true, nil
+	i := findUser(doc.Users, username)
+	if i < 0 {
+		return domain.User{}, false, nil
+	}
+	return doc.Users[i], true, nil
+}
+
+func (s *FileStore) ListUsers() ([]domain.User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	doc, err := s.read()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.User, len(doc.Users))
+	copy(out, doc.Users)
+	return out, nil
+}
+
+func (s *FileStore) DeleteUser(username string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	doc, err := s.read()
+	if err != nil {
+		return err
+	}
+	i := findUser(doc.Users, username)
+	if i < 0 {
+		return domain.ErrNotFound
+	}
+	doc.Users = append(doc.Users[:i], doc.Users[i+1:]...)
+	return s.write(doc)
+}
+
+func (s *FileStore) BumpSessionGeneration(username string) (uint64, error) {
+	return s.updateUser(username, func(u *domain.User) {
+		u.SessionGeneration++
+	})
+}
+
+func (s *FileStore) UpdatePassword(username, passwordHash string) (uint64, error) {
+	return s.updateUser(username, func(u *domain.User) {
+		u.PasswordHash = passwordHash
+		u.SessionGeneration++
+	})
+}
+
+func (s *FileStore) UpdateRole(username string, role domain.Role) (uint64, error) {
+	return s.updateUser(username, func(u *domain.User) {
+		u.Role = role
+		u.SessionGeneration++
+	})
+}
+
+func (s *FileStore) updateUser(username string, fn func(*domain.User)) (uint64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	doc, err := s.read()
+	if err != nil {
+		return 0, err
+	}
+	i := findUser(doc.Users, username)
+	if i < 0 {
+		return 0, domain.ErrUnauthorized
+	}
+	fn(&doc.Users[i])
+	if err := s.write(doc); err != nil {
+		return 0, err
+	}
+	return doc.Users[i].SessionGeneration, nil
+}
+
+func (s *FileStore) SaveInvite(invite domain.Invite) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	doc, err := s.read()
+	if err != nil {
+		return err
+	}
+	doc.Invites = append(doc.Invites, invite)
+	return s.write(doc)
+}
+
+func (s *FileStore) ListInvites() ([]domain.Invite, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	doc, err := s.read()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.Invite, len(doc.Invites))
+	copy(out, doc.Invites)
+	return out, nil
+}
+
+func (s *FileStore) AcceptInvite(tokenHash string, user domain.User) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	doc, err := s.read()
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	idx := -1
+	for i := range doc.Invites {
+		inv := &doc.Invites[i]
+		if inv.TokenHash != tokenHash {
+			continue
+		}
+		if inv.Used() || now.After(inv.ExpiresAt) {
+			return domain.ErrInviteInvalid
+		}
+		idx = i
+		break
+	}
+	if idx < 0 {
+		return domain.ErrInviteInvalid
+	}
+	if findUser(doc.Users, user.Username) >= 0 {
+		return domain.ErrUserExists
+	}
+	if len(doc.Users) >= domain.MaxUsers {
+		return domain.ErrForbidden
+	}
+	if user.Role == "" {
+		user.Role = doc.Invites[idx].Role
+	}
+	if user.SessionGeneration == 0 {
+		user.SessionGeneration = 1
+	}
+	if user.CreatedAt.IsZero() {
+		user.CreatedAt = now
+	}
+	doc.Invites[idx].UsedAt = now
+	doc.Users = append(doc.Users, user)
+	return s.write(doc)
+}
+
+func findUser(users []domain.User, username string) int {
+	for i, u := range users {
+		if u.Username == username {
+			return i
+		}
+	}
+	return -1
 }
 
 var _ ports.CredentialStore = (*FileStore)(nil)
 
-// LoadOrCreateSessionSecret returns the per-install HMAC signing key at
-// <dataDir>/session_secret, generating and persisting a random one on first
-// run. Existing sessions stay valid across restarts because the key doesn't
-// change; a fresh install (or a wiped data dir) invalidates all of them.
 func LoadOrCreateSessionSecret(dataDir string) ([]byte, error) {
 	path := filepath.Join(dataDir, secretFile)
 

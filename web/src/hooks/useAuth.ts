@@ -1,11 +1,28 @@
 import { useCallback, useEffect, useState } from "react";
-import { getAuthStatus, getMe, login as apiLogin, logout as apiLogout, setupAdmin } from "../api/client";
+import {
+  getAuthStatus,
+  getMe,
+  login as apiLogin,
+  logout as apiLogout,
+  setupAdmin,
+  type UserRole,
+} from "../api/client";
 
 type AuthState =
   | { phase: "loading" }
   | { phase: "needs-setup" }
   | { phase: "needs-login" }
-  | { phase: "authenticated"; username: string };
+  | { phase: "authenticated"; username: string; role: UserRole; readOnly: boolean; instanceReadOnly: boolean };
+
+function fromUser(user: { username: string; role: UserRole; readOnly: boolean; instanceReadOnly: boolean }): AuthState {
+  return {
+    phase: "authenticated",
+    username: user.username,
+    role: user.role,
+    readOnly: user.readOnly,
+    instanceReadOnly: user.instanceReadOnly,
+  };
+}
 
 export function useAuth() {
   const [state, setState] = useState<AuthState>({ phase: "loading" });
@@ -13,7 +30,7 @@ export function useAuth() {
   const refresh = useCallback(async () => {
     try {
       const me = await getMe();
-      setState({ phase: "authenticated", username: me.username });
+      setState(fromUser(me));
       return;
     } catch {
       // Not logged in (401) or a transient failure — either way, fall
@@ -36,18 +53,20 @@ export function useAuth() {
   const setup = useCallback(
     async (username: string, password: string, setupToken = "") => {
       await setupAdmin(username, password, setupToken);
-      await refresh();
+      try {
+        const user = await apiLogin(username, password);
+        setState(fromUser(user));
+      } catch {
+        await refresh();
+      }
     },
     [refresh],
   );
 
-  const login = useCallback(
-    async (username: string, password: string) => {
-      const user = await apiLogin(username, password);
-      setState({ phase: "authenticated", username: user.username });
-    },
-    [],
-  );
+  const login = useCallback(async (username: string, password: string) => {
+    const user = await apiLogin(username, password);
+    setState(fromUser(user));
+  }, []);
 
   const logout = useCallback(async () => {
     await apiLogout();

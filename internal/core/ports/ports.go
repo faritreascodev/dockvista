@@ -24,10 +24,10 @@ type DockerClient interface {
 	PauseContainer(ctx context.Context, id string) error
 	UnpauseContainer(ctx context.Context, id string) error
 	RestartContainer(ctx context.Context, id string) error
-	// StreamLogs returns a live stream of the container's stdout/stderr.
-	// The caller owns the returned ReadCloser and must Close it; the
-	// implementation must stop producing data promptly once ctx is done.
-	StreamLogs(ctx context.Context, id string, tail string) (io.ReadCloser, error)
+	// StreamLogs returns a live (or one-shot) stream of the container's
+	// stdout/stderr. The caller owns the returned ReadCloser and must Close
+	// it; the implementation must stop producing data promptly once ctx is done.
+	StreamLogs(ctx context.Context, id string, opts domain.LogStreamOptions) (io.ReadCloser, error)
 	// LogsMultiplexed reports whether StreamLogs returns Docker's 8-byte
 	// framed stdout/stderr stream. A TTY container emits a raw byte stream
 	// instead, and framing that corrupts the log.
@@ -36,7 +36,7 @@ type DockerClient interface {
 	// once ctx is cancelled or the underlying connection ends.
 	Events(ctx context.Context) (<-chan domain.Event, <-chan error)
 
-	// CreateExec starts a new /bin/sh exec session in the container and
+	// CreateExec starts a new interactive shell session in the container and
 	// returns its ID. AttachExec then hijacks the connection for bytes to
 	// flow both ways; the caller owns the returned connection and must
 	// close it. ResizeExec adjusts the pty size for an attached session.
@@ -52,6 +52,12 @@ type DockerClient interface {
 	// InspectContainer returns the daemon's raw JSON for the container,
 	// passed straight through to the frontend's Inspect tab.
 	InspectContainer(ctx context.Context, id string) ([]byte, error)
+
+	InspectFilesystem(ctx context.Context, id string) (domain.ContainerFS, error)
+	ListContainerDir(ctx context.Context, id, path string) (domain.DirListing, error)
+	StatContainerPath(ctx context.Context, id, path string) (domain.FSEntry, error)
+	CopyContainerFile(ctx context.Context, id, path string) (io.ReadCloser, domain.FSEntry, error)
+	ContainerChanges(ctx context.Context, id string) (domain.FSChangeList, error)
 
 	Close() error
 }

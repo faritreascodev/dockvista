@@ -54,7 +54,7 @@ export function ConfirmDialog({
     >
       <p className="text-sm text-ink-muted">{description}</p>
       {error && (
-        <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+        <div className="mt-3 rounded-md border border-bad/30 bg-bad/10 px-3 py-2 text-sm text-bad">
           {error}
         </div>
       )}

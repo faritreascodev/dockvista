@@ -3,26 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>DockVista</title>
-    <script>
-      // Applied before React mounts so the page never flashes the wrong
-      // theme on load. Kept in sync with the logic in src/hooks/useTheme.ts.
-      (function () {
-        try {
-          var stored = localStorage.getItem("dockvista-theme");
-          var dark = stored ? stored === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
-          document.documentElement.classList.toggle("dark", dark);
-
-          var presets = { sky: "14 165 233", violet: "139 92 246", emerald: "16 185 129", rose: "244 63 94", amber: "245 158 11", teal: "20 184 166" };
-          var accent = localStorage.getItem("dockvista-accent");
-          if (accent && presets[accent]) {
-            document.documentElement.style.setProperty("--color-accent", presets[accent]);
-          }
-        } catch {
-          /* localStorage unavailable (private mode, etc.) — defaults apply. */
-        }
-      })();
-    </script>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

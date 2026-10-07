@@ -1,30 +1,40 @@
-import type { LucideIcon } from "lucide-react";
+import type { ReactNode } from "react";
+import { Sparkline } from "./Sparkline";
+
+export type Tone = "accent" | "ok" | "warn" | "bad" | "info" | "muted";
+
+const TONE_TEXT: Record<Tone, string> = {
+  accent: "text-accent",
+  ok: "text-ok",
+  warn: "text-warn",
+  bad: "text-bad",
+  info: "text-info",
+  muted: "text-ink-faint",
+};
 
 interface StatCardProps {
   label: string;
-  value: string;
-  icon: LucideIcon;
-  accent?: "default" | "emerald" | "sky" | "amber" | "rose";
+  value: ReactNode;
+  hint?: ReactNode;
+  tone?: Tone;
+  /** Optional history rendered under the value. */
+  series?: number[];
+  seriesMax?: number;
 }
 
-const ACCENTS: Record<NonNullable<StatCardProps["accent"]>, string> = {
-  default: "bg-panel-2 text-ink-muted",
-  emerald: "bg-emerald-500/10 text-emerald-500 dark:text-emerald-400",
-  sky: "bg-sky-500/10 text-sky-500 dark:text-sky-400",
-  amber: "bg-amber-500/10 text-amber-500 dark:text-amber-400",
-  rose: "bg-rose-500/10 text-rose-500 dark:text-rose-400",
-};
-
-export function StatCard({ label, value, icon: Icon, accent = "default" }: StatCardProps) {
+/** A readout tile: caps label, large mono value, optional trend line. */
+export function StatCard({ label, value, hint, tone = "muted", series, seriesMax }: StatCardProps) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-edge bg-panel p-4">
-      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${ACCENTS[accent]}`}>
-        <Icon className="h-5 w-5" />
+    <div className="relative overflow-hidden rounded-lg border border-edge bg-panel px-4 pb-3 pt-3.5">
+      <div className="flex items-center gap-2">
+        <span className={`h-1.5 w-1.5 rounded-[1px] bg-current ${TONE_TEXT[tone]}`} />
+        <p className="label-caps">{label}</p>
       </div>
-      <div>
-        <p className="text-xs font-medium text-ink-muted">{label}</p>
-        <p className="mt-0.5 text-xl font-semibold tabular-nums text-ink">{value}</p>
-      </div>
+      <p className="mt-2 font-mono text-2xl font-medium tabular-nums tracking-tight text-ink">{value}</p>
+      {hint && <p className="mt-0.5 truncate text-xs text-ink-faint">{hint}</p>}
+      {series && (
+        <Sparkline values={series} max={seriesMax} tone={TONE_TEXT[tone]} className="-mx-4 -mb-3 mt-2 block h-9 w-[calc(100%+2rem)]" />
+      )}
     </div>
   );
 }

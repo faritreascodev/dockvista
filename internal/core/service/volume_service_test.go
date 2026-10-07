@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"io"
 	"testing"
 
 	"dockvista/internal/core/domain"
@@ -32,6 +33,18 @@ func (f *fakeVolumeClient) RemoveVolume(ctx context.Context, name string, force 
 
 func (f *fakeVolumeClient) PruneVolumes(ctx context.Context) (int, uint64, error) {
 	return f.pruneN, f.pruneSize, nil
+}
+
+func (f *fakeVolumeClient) ListVolumeDir(ctx context.Context, volumeName, relPath string) (domain.DirListing, error) {
+	return domain.DirListing{Path: relPath, Reason: domain.ListReasonNotRunning}, nil
+}
+
+func (f *fakeVolumeClient) StatVolumePath(ctx context.Context, volumeName, relPath string) (domain.FSEntry, error) {
+	return domain.FSEntry{}, domain.ErrNotFound
+}
+
+func (f *fakeVolumeClient) CopyVolumeFile(ctx context.Context, volumeName, relPath string) (io.ReadCloser, domain.FSEntry, error) {
+	return nil, domain.FSEntry{}, domain.ErrNotFound
 }
 
 func TestVolumeService_CreateThenList(t *testing.T) {

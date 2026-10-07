@@ -47,17 +47,24 @@ func (c *Client) CreateContainer(ctx context.Context, spec domain.ContainerSpec)
 		return "", false, fmt.Errorf("docker: %w: %w", domain.ErrInvalidInput, err)
 	}
 
+	hostCfg := &container.HostConfig{
+		PortBindings:  portBindings,
+		Binds:         spec.Binds,
+		RestartPolicy: toRestartPolicy(spec.RestartPolicy),
+	}
+	hostCfg.Memory = spec.MemoryBytes
+	if spec.Network != "" {
+		hostCfg.NetworkMode = container.NetworkMode(spec.Network)
+	}
 	resp, err := c.sdk.ContainerCreate(ctx,
 		&container.Config{
 			Image:        spec.Image,
 			Env:          spec.Env,
+			Cmd:          spec.Cmd,
+			Labels:       spec.Labels,
 			ExposedPorts: exposedPorts,
 		},
-		&container.HostConfig{
-			PortBindings:  portBindings,
-			Binds:         spec.Binds,
-			RestartPolicy: toRestartPolicy(spec.RestartPolicy),
-		},
+		hostCfg,
 		nil, nil, spec.Name,
 	)
 	if err != nil {

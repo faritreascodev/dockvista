@@ -27,6 +27,14 @@ only Docker; no Go or Node toolchain is required on the host.
 docker compose up -d --build
 ```
 
+TLS in front (Caddy on 80/443, Secure cookies, no published 8080). Compose
+2.24+ for `!reset`. Set `DOCKVISTA_HOST` to the name on the certificate:
+
+```bash
+DOCKVISTA_HOST=dockvista.example.com \
+  docker compose -f docker-compose.yml -f deploy/compose.tls.yml up -d
+```
+
 The container runs as a non-root user, so it needs the group of the Docker
 socket:
 
@@ -66,6 +74,17 @@ use WSL or the commands above, or use Docker Compose.
 
 The native binary reads `DOCKER_HOST`. If it is unset, the Docker client uses
 the platform default: the named pipe on Windows, the Unix socket elsewhere.
+
+### Windows tray
+
+`dockvista-tray.exe` lives next to `dockvista.exe` (same folder in a GitHub
+release). It starts/stops that binary, binds `127.0.0.1:8080`, stores data
+under `%LOCALAPPDATA%\DockVista`, and opens the browser. It will not kill a
+server it did not start. Build it with a hidden console:
+
+```powershell
+go build -ldflags="-H windowsgui" -o bin\dockvista-tray.exe .\cmd\dockvista-tray
+```
 
 ## Known limits
 

@@ -14,11 +14,16 @@ import (
 // directly from the daemon on every call, since they're not polled at a
 // tight interval the way the container list is.
 type ImageService struct {
-	docker ports.ImageClient
+	docker       ports.ImageClient
+	registryAuth func(ref string) string
 }
 
 func NewImageService(docker ports.ImageClient) *ImageService {
 	return &ImageService{docker: docker}
+}
+
+func (s *ImageService) SetRegistryAuth(fn func(ref string) string) {
+	s.registryAuth = fn
 }
 
 func (s *ImageService) List(ctx context.Context) ([]domain.Image, error) {
@@ -37,11 +42,23 @@ func (s *ImageService) Remove(ctx context.Context, id string, force bool) error 
 }
 
 func (s *ImageService) Pull(ctx context.Context, ref string) (io.ReadCloser, error) {
-	r, err := s.docker.PullImage(ctx, ref)
+	auth := ""
+	if s.registryAuth != nil {
+		auth = s.registryAuth(ref)
+	}
+	r, err := s.docker.PullImage(ctx, ref, auth)
 	if err != nil {
 		return nil, fmt.Errorf("service: pull image: %w", err)
 	}
 	return r, nil
+}
+
+func (s *ImageService) History(ctx context.Context, id string) ([]domain.ImageLayer, error) {
+	layers, err := s.docker.ImageHistory(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("service: image history: %w", err)
+	}
+	return layers, nil
 }
 
 func (s *ImageService) Prune(ctx context.Context) (deleted int, spaceReclaimed uint64, err error) {

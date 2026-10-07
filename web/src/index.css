@@ -1,30 +1,93 @@
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Every color is an RGB triplet so Tailwind's `/<alpha>` modifiers work on
+ * it. Pages use the semantic names (canvas, panel, ink, ok, bad, ...) and
+ * never a raw palette color, so both themes and every accent stay coherent.
+ */
 :root {
-  /* Light theme (default) */
-  --color-canvas: 248 250 252; /* slate-50 — page background */
-  --color-panel: 255 255 255; /* white — cards, table, drawer */
-  --color-panel-2: 248 250 252; /* slate-50 — table header, hover rows */
-  --color-edge: 226 232 240; /* slate-200 — borders */
-  --color-ink: 15 23 42; /* slate-900 — primary text */
-  --color-ink-muted: 100 116 139; /* slate-500 — secondary text */
-  --color-ink-faint: 148 163 184; /* slate-400 — placeholders, disabled */
-  --color-accent: 14 165 233; /* sky-500 */
-  --color-accent-ink: 255 255 255; /* text on top of accent-colored fills */
+  --color-canvas: 243 241 236;
+  --color-panel: 255 255 254;
+  --color-panel-2: 248 246 242;
+  --color-sunken: 236 233 226;
+  --color-edge: 223 219 210;
+  --color-edge-strong: 199 194 183;
+  --color-ink: 24 24 27;
+  --color-ink-muted: 87 87 94;
+  --color-ink-faint: 145 143 140;
+  --color-accent: 196 98 4;
+  --color-accent-ink: 255 255 255;
+
+  --color-ok: 21 128 61;
+  --color-warn: 180 83 9;
+  --color-bad: 190 18 60;
+  --color-info: 3 105 161;
+
+  color-scheme: light;
 }
 
 .dark {
-  --color-canvas: 8 11 17; /* near-black page background */
-  --color-panel: 19 26 40; /* elevated surface */
-  --color-panel-2: 15 20 32; /* subtler surface (headers, hover) */
-  --color-edge: 30 41 59; /* slate-800 */
-  --color-ink: 226 232 240; /* slate-200 */
-  --color-ink-muted: 148 163 184; /* slate-400 */
-  --color-ink-faint: 71 85 105; /* slate-600 */
-  --color-accent: 56 189 248; /* sky-400 — brighter for dark backgrounds */
-  --color-accent-ink: 8 11 17;
+  --color-canvas: 11 12 14;
+  --color-panel: 19 20 23;
+  --color-panel-2: 25 27 31;
+  --color-sunken: 8 9 10;
+  --color-edge: 36 38 43;
+  --color-edge-strong: 56 59 66;
+  --color-ink: 232 230 225;
+  --color-ink-muted: 156 154 150;
+  --color-ink-faint: 98 98 102;
+  --color-accent: 245 166 35;
+  --color-accent-ink: 20 14 4;
+
+  --color-ok: 74 222 128;
+  --color-warn: 251 191 36;
+  --color-bad: 251 113 133;
+  --color-info: 56 189 248;
+
+  color-scheme: dark;
+}
+
+/*
+ * Accent presets, selected with <html data-accent="...">. Each has a light
+ * value dark enough to carry white text and a brighter dark-theme value.
+ * Keep the names in sync with ACCENT_PRESETS in src/hooks/useAccentColor.ts
+ * and public/theme-init.js.
+ */
+[data-accent="cyan"] {
+  --color-accent: 8 131 163;
+}
+.dark[data-accent="cyan"] {
+  --color-accent: 34 211 238;
+  --color-accent-ink: 4 20 24;
+}
+[data-accent="violet"] {
+  --color-accent: 124 58 237;
+}
+.dark[data-accent="violet"] {
+  --color-accent: 167 139 250;
+  --color-accent-ink: 18 10 36;
+}
+[data-accent="lime"] {
+  --color-accent: 77 124 15;
+}
+.dark[data-accent="lime"] {
+  --color-accent: 163 230 53;
+  --color-accent-ink: 14 22 4;
+}
+[data-accent="coral"] {
+  --color-accent: 225 29 72;
+}
+.dark[data-accent="coral"] {
+  --color-accent: 251 113 133;
+  --color-accent-ink: 30 6 12;
 }
 
 html,
@@ -35,13 +98,107 @@ body,
 
 body {
   margin: 0;
-  font-family:
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    Roboto,
-    sans-serif;
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "ss02";
   background-color: rgb(var(--color-canvas));
   color: rgb(var(--color-ink));
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background-color: rgb(var(--color-accent) / 0.3);
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--color-accent));
+  outline-offset: 2px;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--color-edge-strong)) transparent;
+}
+
+@layer components {
+  /* Uppercase micro-label used for column headers, section kickers, and
+     metric captions. */
+  .label-caps {
+    @apply font-mono text-[10.5px] font-medium uppercase tracking-[0.12em] text-ink-faint;
+  }
+
+  .field {
+    @apply w-full rounded-md border border-edge bg-panel-2 px-3 py-2 text-sm text-ink outline-none transition placeholder:text-ink-faint focus:border-accent focus:bg-panel disabled:opacity-60;
+  }
+
+  /* Faint engineering grid behind hero areas. */
+  .grid-paper {
+    background-image:
+      linear-gradient(rgb(var(--color-edge) / 0.55) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--color-edge) / 0.55) 1px, transparent 1px);
+    background-size: 24px 24px;
+    background-position: -1px -1px;
+  }
+
+  .scan-line {
+    background: linear-gradient(to bottom, transparent, rgb(var(--color-accent) / 0.18), transparent);
+    animation: dv-scan 7s ease-in-out infinite;
+  }
+}
+
+@keyframes dv-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgb(var(--color-ok) / 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgb(var(--color-ok) / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(var(--color-ok) / 0);
+  }
+}
+
+.live-dot {
+  animation: dv-pulse-ring 2s ease-out infinite;
+}
+
+@keyframes dv-scan {
+  0%,
+  100% {
+    transform: translateY(-20%);
+  }
+  50% {
+    transform: translateY(120%);
+  }
+}
+
+@keyframes dv-type-in {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.auth-readout > div {
+  animation: dv-type-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.auth-readout > div:nth-child(2) {
+  animation-delay: 90ms;
+}
+.auth-readout > div:nth-child(3) {
+  animation-delay: 180ms;
+}
+.auth-readout > div:nth-child(4) {
+  animation-delay: 270ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot,
+  .scan-line,
+  .auth-readout > div {
+    animation: none;
+  }
 }

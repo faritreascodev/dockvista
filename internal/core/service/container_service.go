@@ -26,6 +26,10 @@ const statsCacheTTL = time.Second
 // detached context (see Stats), so it needs its own deadline.
 const statsCallTimeout = 10 * time.Second
 
+// fleetStatsConcurrency caps how many daemon stats calls one FleetStats
+// request has open at once. Each is a separate request on the socket.
+const fleetStatsConcurrency = 8
+
 // ContainerService is the use-case layer for container inspection and
 // lifecycle control.
 type ContainerService struct {
@@ -118,6 +122,47 @@ func (s *ContainerService) Stats(ctx context.Context, id string) (domain.Stats, 
 	return stats, nil
 }
 
+// FleetStats samples every running container in the cache. A container
+// whose sample fails (it stopped mid-request, say) is left out rather than
+// failing the whole response.
+func (s *ContainerService) FleetStats(ctx context.Context) []domain.Stats {
+	var ids []string
+	for _, c := range s.store.List() {
+		if c.State == domain.StateRunning {
+			ids = append(ids, c.ID)
+		}
+	}
+
+	samples := make([]domain.Stats, len(ids))
+	ok := make([]bool, len(ids))
+	sem := make(chan struct{}, fleetStatsConcurrency)
+	var wg sync.WaitGroup
+	for i, id := range ids {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+			if stats, err := s.Stats(ctx, id); err == nil {
+				samples[i], ok[i] = stats, true
+			}
+		}()
+	}
+	wg.Wait()
+
+	out := make([]domain.Stats, 0, len(ids))
+	for i, sample := range samples {
+		if ok[i] {
+			out = append(out, sample)
+		}
+	}
+	return out
+}
+
 // storeStats records a fresh sample and drops entries whose TTL has passed.
 // Without the sweep, the map keeps one entry for every container ever
 // sampled, including containers that have since been removed.
@@ -179,8 +224,11 @@ func (s *ContainerService) Restart(ctx context.Context, id string) error {
 }
 
 // StreamLogs proxies a live log stream for the given container.
-func (s *ContainerService) StreamLogs(ctx context.Context, id, tail string) (io.ReadCloser, error) {
-	r, err := s.docker.StreamLogs(ctx, id, tail)
+func (s *ContainerService) StreamLogs(ctx context.Context, id string, opts domain.LogStreamOptions) (io.ReadCloser, error) {
+	if opts.Tail == "" {
+		opts.Tail = "200"
+	}
+	r, err := s.docker.StreamLogs(ctx, id, opts)
 	if err != nil {
 		return nil, fmt.Errorf("service: stream logs: %w", err)
 	}
@@ -246,6 +294,68 @@ func (s *ContainerService) Inspect(ctx context.Context, id string) ([]byte, erro
 		return nil, fmt.Errorf("service: inspect container: %w", err)
 	}
 	return raw, nil
+}
+
+func (s *ContainerService) Filesystem(ctx context.Context, id string) (domain.ContainerFS, error) {
+	fs, err := s.docker.InspectFilesystem(ctx, id)
+	if err != nil {
+		return domain.ContainerFS{}, fmt.Errorf("service: filesystem: %w", err)
+	}
+	return fs, nil
+}
+
+func (s *ContainerService) ListFiles(ctx context.Context, id, rawPath string) (domain.DirListing, error) {
+	path, err := domain.CleanContainerPath(rawPath)
+	if err != nil {
+		return domain.DirListing{}, fmt.Errorf("service: list files: %w", err)
+	}
+	listing, err := s.docker.ListContainerDir(ctx, id, path)
+	if err != nil {
+		return domain.DirListing{}, fmt.Errorf("service: list files: %w", err)
+	}
+	return listing, nil
+}
+
+func (s *ContainerService) FileStat(ctx context.Context, id, rawPath string) (domain.FSEntry, error) {
+	path, err := domain.CleanContainerPath(rawPath)
+	if err != nil {
+		return domain.FSEntry{}, fmt.Errorf("service: stat file: %w", err)
+	}
+	entry, err := s.docker.StatContainerPath(ctx, id, path)
+	if err != nil {
+		return domain.FSEntry{}, fmt.Errorf("service: stat file: %w", err)
+	}
+	return entry, nil
+}
+
+func (s *ContainerService) FileContent(ctx context.Context, id, rawPath string) (io.ReadCloser, domain.FSEntry, error) {
+	path, err := domain.CleanContainerPath(rawPath)
+	if err != nil {
+		return nil, domain.FSEntry{}, fmt.Errorf("service: file content: %w", err)
+	}
+	stat, err := s.docker.StatContainerPath(ctx, id, path)
+	if err != nil {
+		return nil, domain.FSEntry{}, fmt.Errorf("service: file content: %w", err)
+	}
+	if stat.Dir {
+		return nil, stat, fmt.Errorf("service: file content: %w", domain.ErrIsDirectory)
+	}
+	if stat.SizeBytes > domain.MaxFileDownloadBytes {
+		return nil, stat, fmt.Errorf("service: file content: %w", domain.ErrTooLarge)
+	}
+	r, entry, err := s.docker.CopyContainerFile(ctx, id, path)
+	if err != nil {
+		return nil, entry, fmt.Errorf("service: file content: %w", err)
+	}
+	return r, entry, nil
+}
+
+func (s *ContainerService) Changes(ctx context.Context, id string) (domain.FSChangeList, error) {
+	list, err := s.docker.ContainerChanges(ctx, id)
+	if err != nil {
+		return domain.FSChangeList{}, fmt.Errorf("service: changes: %w", err)
+	}
+	return list, nil
 }
 
 func (s *ContainerService) ResizeExec(ctx context.Context, execID string, rows, cols uint) error {

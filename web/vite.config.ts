@@ -13,8 +13,12 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://localhost:8080",
-        changeOrigin: true,
+        // Not "localhost": Node may resolve that to ::1, and the API binds
+        // IPv4 loopback by default.
+        target: "http://127.0.0.1:8080",
+        // Keep the browser Host/Origin so the API's same-origin check
+        // matches Vite's proxy the same way a production single origin does.
+        changeOrigin: false,
         ws: true,
       },
     },

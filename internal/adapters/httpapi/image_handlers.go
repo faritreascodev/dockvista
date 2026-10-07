@@ -20,6 +20,7 @@ type imageService interface {
 	List(ctx context.Context) ([]domain.Image, error)
 	Remove(ctx context.Context, id string, force bool) error
 	Pull(ctx context.Context, ref string) (io.ReadCloser, error)
+	History(ctx context.Context, id string) ([]domain.ImageLayer, error)
 	Prune(ctx context.Context) (deleted int, spaceReclaimed uint64, err error)
 }
 
@@ -29,7 +30,7 @@ type imageHandlers struct {
 }
 
 func (h *imageHandlers) handleList(w http.ResponseWriter, r *http.Request) {
-	images, err := h.svc.List(r.Context())
+	images, err := h.s(r).List(r.Context())
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -45,15 +46,40 @@ func (h *imageHandlers) handleRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	force := r.URL.Query().Get("force") == "true"
 
-	if err := h.svc.Remove(r.Context(), id, force); err != nil {
+	if err := h.s(r).Remove(r.Context(), id, force); err != nil {
 		writeServiceError(w, err)
 		return
 	}
 	httpjson.Write(w, http.StatusOK, actionResultDTO{Status: "ok", ID: id})
 }
 
+func (h *imageHandlers) handleHistory(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if !isValidImageRef(id) {
+		writeError(w, http.StatusBadRequest, "invalid image id")
+		return
+	}
+	layers, err := h.s(r).History(r.Context(), id)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	out := make([]imageLayerDTO, 0, len(layers))
+	for _, layer := range layers {
+		out = append(out, imageLayerDTO{
+			ID:        layer.ID,
+			CreatedAt: layer.Created.Unix(),
+			CreatedBy: layer.CreatedBy,
+			SizeBytes: layer.Size,
+			Tags:      layer.Tags,
+			Comment:   layer.Comment,
+		})
+	}
+	httpjson.Write(w, http.StatusOK, out)
+}
+
 func (h *imageHandlers) handlePrune(w http.ResponseWriter, r *http.Request) {
-	deleted, reclaimed, err := h.svc.Prune(r.Context())
+	deleted, reclaimed, err := h.s(r).Prune(r.Context())
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -88,7 +114,7 @@ func (h *imageHandlers) handlePull(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	stream, err := h.svc.Pull(ctx, req.Reference)
+	stream, err := h.s(r).Pull(ctx, req.Reference)
 	if err != nil {
 		writeServiceError(w, err)
 		return

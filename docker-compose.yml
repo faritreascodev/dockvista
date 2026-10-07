@@ -9,10 +9,16 @@ services:
     container_name: dockvista
     restart: unless-stopped
     ports:
-      - "${DOCKVISTA_PORT:-8080}:8080"
+      # Loopback only: anyone who can reach this port and log in controls the
+      # Docker daemon. Put a TLS reverse proxy in front for remote access, or
+      # set DOCKVISTA_BIND=0.0.0.0 if you really mean to expose it.
+      - "${DOCKVISTA_BIND:-127.0.0.1}:${DOCKVISTA_PORT:-8080}:8080"
     environment:
       # Set to true when a TLS proxy sits in front of DockVista.
       DOCKVISTA_COOKIE_SECURE: "${DOCKVISTA_COOKIE_SECURE:-false}"
+      # true = observe only: start/stop/remove, create, prune, pull and the
+      # terminal are refused server-side.
+      DOCKVISTA_READ_ONLY: "${DOCKVISTA_READ_ONLY:-false}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - dockvista-data:/data
@@ -22,6 +28,12 @@ services:
     # group, e.g. DOCKER_GID=$(getent group docker | cut -d: -f3).
     group_add:
       - "${DOCKER_GID:-0}"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/dockvista", "readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
 volumes:
   dockvista-data:

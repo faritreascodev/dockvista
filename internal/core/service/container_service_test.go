@@ -30,6 +30,9 @@ type fakeDocker struct {
 	actionErr   error
 	createID    string
 	createErr   error
+	listDir     func(path string) (domain.DirListing, error)
+	statDir     bool
+	statSize    int64
 }
 
 func newFakeDocker() *fakeDocker {
@@ -81,8 +84,35 @@ func (f *fakeDocker) RestartContainer(ctx context.Context, id string) error {
 	return f.actionErr
 }
 
-func (f *fakeDocker) StreamLogs(ctx context.Context, id, tail string) (io.ReadCloser, error) {
+func (f *fakeDocker) StreamLogs(ctx context.Context, id string, opts domain.LogStreamOptions) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("log line\n")), nil
+}
+
+func (f *fakeDocker) InspectFilesystem(ctx context.Context, id string) (domain.ContainerFS, error) {
+	return domain.ContainerFS{Running: true}, nil
+}
+
+func (f *fakeDocker) ListContainerDir(ctx context.Context, id, path string) (domain.DirListing, error) {
+	if f.listDir != nil {
+		return f.listDir(path)
+	}
+	return domain.DirListing{Path: path, Running: true, Dir: true}, nil
+}
+
+func (f *fakeDocker) StatContainerPath(ctx context.Context, id, path string) (domain.FSEntry, error) {
+	size := f.statSize
+	if size == 0 && !f.statDir {
+		size = 4
+	}
+	return domain.FSEntry{Name: "f", Path: path, SizeBytes: size, Dir: f.statDir}, nil
+}
+
+func (f *fakeDocker) CopyContainerFile(ctx context.Context, id, path string) (io.ReadCloser, domain.FSEntry, error) {
+	return io.NopCloser(strings.NewReader("data")), domain.FSEntry{Name: "f", Path: path, SizeBytes: 4}, nil
+}
+
+func (f *fakeDocker) ContainerChanges(ctx context.Context, id string) (domain.FSChangeList, error) {
+	return domain.FSChangeList{}, nil
 }
 
 func (f *fakeDocker) LogsMultiplexed(ctx context.Context, id string) (bool, error) {
@@ -304,5 +334,32 @@ func TestStats_CancelledCallerDoesNotFailTheSharedSample(t *testing.T) {
 	cancel()
 	if _, err := svc.Stats(cancelled, "abc"); err != nil {
 		t.Fatalf("Stats with cancelled caller ctx: %v", err)
+	}
+}
+
+func TestListFiles_RejectsRelativePath(t *testing.T) {
+	svc := service.New(newFakeDocker(), store.New(), nil)
+	if _, err := svc.ListFiles(context.Background(), "web", "etc/passwd"); err == nil {
+		t.Fatal("expected invalid path")
+	}
+}
+
+func TestFileContent_RejectsDirectory(t *testing.T) {
+	fake := newFakeDocker()
+	fake.statDir = true
+	svc := service.New(fake, store.New(), nil)
+	_, _, err := svc.FileContent(context.Background(), "web", "/app")
+	if !errors.Is(err, domain.ErrIsDirectory) {
+		t.Fatalf("err = %v, want ErrIsDirectory", err)
+	}
+}
+
+func TestFileContent_RejectsOversize(t *testing.T) {
+	fake := newFakeDocker()
+	fake.statSize = domain.MaxFileDownloadBytes + 1
+	svc := service.New(fake, store.New(), nil)
+	_, _, err := svc.FileContent(context.Background(), "web", "/app/big.bin")
+	if !errors.Is(err, domain.ErrTooLarge) {
+		t.Fatalf("err = %v, want ErrTooLarge", err)
 	}
 }

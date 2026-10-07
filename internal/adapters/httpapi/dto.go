@@ -52,20 +52,34 @@ func newContainerListDTO(containers []domain.Container) []containerDTO {
 }
 
 type statsDTO struct {
-	ContainerID   string  `json:"containerId"`
-	CPUPercent    float64 `json:"cpuPercent"`
-	MemoryUsage   uint64  `json:"memoryUsageBytes"`
-	MemoryLimit   uint64  `json:"memoryLimitBytes"`
-	MemoryPercent float64 `json:"memoryPercent"`
+	ContainerID     string  `json:"containerId"`
+	CPUPercent      float64 `json:"cpuPercent"`
+	MemoryUsage     uint64  `json:"memoryUsageBytes"`
+	MemoryLimit     uint64  `json:"memoryLimitBytes"`
+	MemoryPercent   float64 `json:"memoryPercent"`
+	NetRxBytes      uint64  `json:"netRxBytes"`
+	NetTxBytes      uint64  `json:"netTxBytes"`
+	BlockReadBytes  uint64  `json:"blockReadBytes"`
+	BlockWriteBytes uint64  `json:"blockWriteBytes"`
+	SampledAt       int64   `json:"sampledAt"`
 }
 
 func newStatsDTO(s domain.Stats) statsDTO {
+	sampled := s.SampledAt.UnixMilli()
+	if s.SampledAt.IsZero() {
+		sampled = 0
+	}
 	return statsDTO{
-		ContainerID:   s.ContainerID,
-		CPUPercent:    s.CPUPercent,
-		MemoryUsage:   s.MemoryUsage,
-		MemoryLimit:   s.MemoryLimit,
-		MemoryPercent: s.MemoryPercent,
+		ContainerID:     s.ContainerID,
+		CPUPercent:      s.CPUPercent,
+		MemoryUsage:     s.MemoryUsage,
+		MemoryLimit:     s.MemoryLimit,
+		MemoryPercent:   s.MemoryPercent,
+		NetRxBytes:      s.NetRxBytes,
+		NetTxBytes:      s.NetTxBytes,
+		BlockReadBytes:  s.BlockReadBytes,
+		BlockWriteBytes: s.BlockWriteBytes,
+		SampledAt:       sampled,
 	}
 }
 
@@ -77,6 +91,74 @@ type engineDTO struct {
 
 func newEngineDTO(e domain.EngineInfo) engineDTO {
 	return engineDTO{Version: e.Version, Reachable: e.Reachable, Containers: e.Containers}
+}
+
+type systemInfoDTO struct {
+	Name              string `json:"name"`
+	ServerVersion     string `json:"serverVersion"`
+	OperatingSystem   string `json:"operatingSystem"`
+	OSType            string `json:"osType"`
+	Architecture      string `json:"architecture"`
+	KernelVersion     string `json:"kernelVersion"`
+	StorageDriver     string `json:"storageDriver"`
+	CPUs              int    `json:"cpus"`
+	MemoryBytes       int64  `json:"memoryBytes"`
+	Containers        int    `json:"containers"`
+	ContainersRunning int    `json:"containersRunning"`
+	ContainersPaused  int    `json:"containersPaused"`
+	ContainersStopped int    `json:"containersStopped"`
+	Images            int    `json:"images"`
+}
+
+func newSystemInfoDTO(i domain.SystemInfo) systemInfoDTO {
+	return systemInfoDTO{
+		Name:              i.Name,
+		ServerVersion:     i.ServerVersion,
+		OperatingSystem:   i.OperatingSystem,
+		OSType:            i.OSType,
+		Architecture:      i.Architecture,
+		KernelVersion:     i.KernelVersion,
+		StorageDriver:     i.StorageDriver,
+		CPUs:              i.CPUs,
+		MemoryBytes:       i.MemoryBytes,
+		Containers:        i.Containers,
+		ContainersRunning: i.ContainersRunning,
+		ContainersPaused:  i.ContainersPaused,
+		ContainersStopped: i.ContainersStopped,
+		Images:            i.Images,
+	}
+}
+
+type diskUsageCategoryDTO struct {
+	Count            int   `json:"count"`
+	Active           int   `json:"active"`
+	SizeBytes        int64 `json:"sizeBytes"`
+	ReclaimableBytes int64 `json:"reclaimableBytes"`
+}
+
+type diskUsageDTO struct {
+	Images     diskUsageCategoryDTO `json:"images"`
+	Containers diskUsageCategoryDTO `json:"containers"`
+	Volumes    diskUsageCategoryDTO `json:"volumes"`
+	BuildCache diskUsageCategoryDTO `json:"buildCache"`
+}
+
+func newDiskUsageCategoryDTO(c domain.DiskUsageCategory) diskUsageCategoryDTO {
+	return diskUsageCategoryDTO{
+		Count:            c.Count,
+		Active:           c.Active,
+		SizeBytes:        c.SizeBytes,
+		ReclaimableBytes: c.ReclaimableBytes,
+	}
+}
+
+func newDiskUsageDTO(d domain.DiskUsage) diskUsageDTO {
+	return diskUsageDTO{
+		Images:     newDiskUsageCategoryDTO(d.Images),
+		Containers: newDiskUsageCategoryDTO(d.Containers),
+		Volumes:    newDiskUsageCategoryDTO(d.Volumes),
+		BuildCache: newDiskUsageCategoryDTO(d.BuildCache),
+	}
 }
 
 type actionResultDTO struct {
@@ -124,6 +206,15 @@ func newImageListDTO(images []domain.Image) []imageDTO {
 type pruneResultDTO struct {
 	Deleted        int    `json:"deleted"`
 	SpaceReclaimed uint64 `json:"spaceReclaimedBytes"`
+}
+
+type imageLayerDTO struct {
+	ID        string   `json:"id"`
+	CreatedAt int64    `json:"createdAt"`
+	CreatedBy string   `json:"createdBy"`
+	SizeBytes int64    `json:"sizeBytes"`
+	Tags      []string `json:"tags,omitempty"`
+	Comment   string   `json:"comment,omitempty"`
 }
 
 type volumeDTO struct {

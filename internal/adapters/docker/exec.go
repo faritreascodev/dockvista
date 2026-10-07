@@ -8,9 +8,15 @@ import (
 	"github.com/docker/docker/api/types/container"
 )
 
-// CreateExec starts a /bin/sh exec session. There's no shell-detection
-// fallback — an image without /bin/sh (e.g. FROM scratch) surfaces as a
-// clear error to the terminal tab rather than silently trying alternatives.
+// shellCmd opens bash when the image has it and sh otherwise. Detection runs
+// inside the container's own /bin/sh, so an image without one (FROM scratch,
+// distroless) still fails with a clear error instead of a hang.
+var shellCmd = []string{
+	"/bin/sh", "-c",
+	`if command -v bash >/dev/null 2>&1; then exec bash; fi; exec sh`,
+}
+
+// CreateExec starts an interactive shell exec session.
 func (c *Client) CreateExec(ctx context.Context, containerID string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, defaultCallTimeout)
 	defer cancel()
@@ -20,7 +26,8 @@ func (c *Client) CreateExec(ctx context.Context, containerID string) (string, er
 		AttachStdout: true,
 		AttachStderr: true,
 		Tty:          true,
-		Cmd:          []string{"/bin/sh"},
+		Env:          []string{"TERM=xterm-256color"},
+		Cmd:          shellCmd,
 	})
 	if err != nil {
 		return "", wrapErr("create exec", err)

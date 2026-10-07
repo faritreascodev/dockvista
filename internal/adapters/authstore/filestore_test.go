@@ -2,7 +2,10 @@ package authstore_test
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"dockvista/internal/adapters/authstore"
 	"dockvista/internal/core/domain"
@@ -31,8 +34,11 @@ func TestFileStore_CreateAdminThenGetUser(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("GetUser: ok=%v err=%v", ok, err)
 	}
-	if got != admin {
-		t.Fatalf("expected %+v, got %+v", admin, got)
+	if got.Username != "admin" || got.PasswordHash != "hashed" || got.Role != domain.RoleAdmin {
+		t.Fatalf("got %+v, want admin with RoleAdmin", got)
+	}
+	if got.SessionGeneration != 1 {
+		t.Fatalf("generation = %d, want 1", got.SessionGeneration)
 	}
 
 	if _, ok, err := store.GetUser("nobody"); err != nil || ok {
@@ -106,7 +112,7 @@ func TestFileStore_BumpSessionGenerationPersists(t *testing.T) {
 		t.Fatalf("CreateAdmin: %v", err)
 	}
 
-	next, err := store.BumpSessionGeneration()
+	next, err := store.BumpSessionGeneration("admin")
 	if err != nil || next != 2 {
 		t.Fatalf("BumpSessionGeneration = %d, %v", next, err)
 	}
@@ -118,5 +124,67 @@ func TestFileStore_BumpSessionGenerationPersists(t *testing.T) {
 	user, ok, err := reloaded.GetUser("admin")
 	if err != nil || !ok || user.SessionGeneration != 2 {
 		t.Fatalf("persisted generation: ok=%v err=%v user=%+v", ok, err, user)
+	}
+}
+
+func TestFileStore_MigratesV1Credentials(t *testing.T) {
+	dir := t.TempDir()
+	legacy := []byte(`{"Username":"farit","PasswordHash":"hashed","SessionGeneration":3}`)
+	if err := os.WriteFile(filepath.Join(dir, "credentials.json"), legacy, 0o600); err != nil {
+		t.Fatalf("write v1: %v", err)
+	}
+
+	store, err := authstore.New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	got, ok, err := store.GetUser("farit")
+	if err != nil || !ok {
+		t.Fatalf("GetUser: ok=%v err=%v", ok, err)
+	}
+	if got.Role != domain.RoleAdmin || got.SessionGeneration != 3 {
+		t.Fatalf("migrated user = %+v, want admin gen 3", got)
+	}
+
+	if _, err := store.BumpSessionGeneration("farit"); err != nil {
+		t.Fatalf("BumpSessionGeneration: %v", err)
+	}
+	reloaded, err := authstore.New(dir)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	again, ok, err := reloaded.GetUser("farit")
+	if err != nil || !ok || again.Role != domain.RoleAdmin || again.SessionGeneration != 4 {
+		t.Fatalf("persisted v2 wrap: ok=%v err=%v user=%+v", ok, err, again)
+	}
+}
+
+func TestFileStore_AcceptInviteCreatesUser(t *testing.T) {
+	store, err := authstore.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := store.CreateAdmin(domain.User{Username: "admin", PasswordHash: "h"}); err != nil {
+		t.Fatalf("CreateAdmin: %v", err)
+	}
+	inv := domain.Invite{
+		ID:        "inv-1",
+		TokenHash: "deadbeef",
+		Role:      domain.RoleViewer,
+		CreatedBy: "admin",
+		ExpiresAt: time.Now().UTC().Add(time.Hour),
+	}
+	if err := store.SaveInvite(inv); err != nil {
+		t.Fatalf("SaveInvite: %v", err)
+	}
+	if err := store.AcceptInvite("deadbeef", domain.User{Username: "look", PasswordHash: "vh"}); err != nil {
+		t.Fatalf("AcceptInvite: %v", err)
+	}
+	got, ok, err := store.GetUser("look")
+	if err != nil || !ok || got.Role != domain.RoleViewer {
+		t.Fatalf("viewer: ok=%v err=%v user=%+v", ok, err, got)
+	}
+	if err := store.AcceptInvite("deadbeef", domain.User{Username: "other", PasswordHash: "x"}); !errors.Is(err, domain.ErrInviteInvalid) {
+		t.Fatalf("reused invite: %v", err)
 	}
 }

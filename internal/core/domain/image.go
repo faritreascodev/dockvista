@@ -12,3 +12,13 @@ type Image struct {
 	Created     time.Time
 	Labels      map[string]string
 }
+
+// ImageLayer is one row of `docker history`.
+type ImageLayer struct {
+	ID        string
+	Created   time.Time
+	CreatedBy string
+	Size      int64
+	Tags      []string
+	Comment   string
+}

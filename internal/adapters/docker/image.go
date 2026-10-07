@@ -48,10 +48,31 @@ func (c *Client) RemoveImage(ctx context.Context, id string, force bool) error {
 // PullImage is not bounded by defaultCallTimeout — a large image can
 // legitimately take minutes; the caller's context (tied to the client's SSE
 // connection) is what ends it.
-func (c *Client) PullImage(ctx context.Context, ref string) (io.ReadCloser, error) {
-	out, err := c.sdk.ImagePull(ctx, ref, image.PullOptions{})
+func (c *Client) PullImage(ctx context.Context, ref, registryAuth string) (io.ReadCloser, error) {
+	out, err := c.sdk.ImagePull(ctx, ref, image.PullOptions{RegistryAuth: registryAuth})
 	if err != nil {
 		return nil, wrapErr("pull image", err)
+	}
+	return out, nil
+}
+
+func (c *Client) ImageHistory(ctx context.Context, id string) ([]domain.ImageLayer, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultCallTimeout)
+	defer cancel()
+	raw, err := c.sdk.ImageHistory(ctx, id)
+	if err != nil {
+		return nil, wrapErr("image history", err)
+	}
+	out := make([]domain.ImageLayer, 0, len(raw))
+	for _, row := range raw {
+		out = append(out, domain.ImageLayer{
+			ID:        row.ID,
+			Created:   time.Unix(row.Created, 0).UTC(),
+			CreatedBy: row.CreatedBy,
+			Size:      row.Size,
+			Tags:      row.Tags,
+			Comment:   row.Comment,
+		})
 	}
 	return out, nil
 }

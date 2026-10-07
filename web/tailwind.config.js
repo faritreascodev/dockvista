@@ -1,32 +1,46 @@
 /** @type {import('tailwindcss').Config} */
+const token = (name) => `rgb(var(--color-${name}) / <alpha-value>)`;
+
 export default {
   darkMode: "class",
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['"IBM Plex Sans"', "ui-sans-serif", "system-ui", "sans-serif"],
+        mono: ['"IBM Plex Mono"', "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+      },
+      // Semantic, theme-aware tokens. Values come from CSS custom properties
+      // defined per theme in src/index.css, so one className works in both.
       colors: {
-        // Semantic, theme-aware tokens — values come from CSS custom
-        // properties defined per-theme in src/index.css (:root for light,
-        // .dark for dark), so a single className works in both themes
-        // instead of every usage needing a `dark:` variant.
-        canvas: "rgb(var(--color-canvas) / <alpha-value>)",
-        panel: "rgb(var(--color-panel) / <alpha-value>)",
-        "panel-2": "rgb(var(--color-panel-2) / <alpha-value>)",
-        edge: "rgb(var(--color-edge) / <alpha-value>)",
-        ink: "rgb(var(--color-ink) / <alpha-value>)",
-        "ink-muted": "rgb(var(--color-ink-muted) / <alpha-value>)",
-        "ink-faint": "rgb(var(--color-ink-faint) / <alpha-value>)",
-        accent: "rgb(var(--color-accent) / <alpha-value>)",
-        "accent-ink": "rgb(var(--color-accent-ink) / <alpha-value>)",
-        // Legacy dark-only palette — kept only for any lingering
-        // `surface-*` usage during the redesign; new code should use the
-        // semantic tokens above.
-        surface: {
-          950: "#0a0e14",
-          900: "#0f1420",
-          850: "#131a28",
-          800: "#182030",
+        canvas: token("canvas"),
+        panel: token("panel"),
+        "panel-2": token("panel-2"),
+        sunken: token("sunken"),
+        edge: token("edge"),
+        "edge-strong": token("edge-strong"),
+        ink: token("ink"),
+        "ink-muted": token("ink-muted"),
+        "ink-faint": token("ink-faint"),
+        accent: token("accent"),
+        "accent-ink": token("accent-ink"),
+        ok: token("ok"),
+        warn: token("warn"),
+        bad: token("bad"),
+        info: token("info"),
+      },
+      keyframes: {
+        "fade-in": { from: { opacity: "0" }, to: { opacity: "1" } },
+        "rise-in": {
+          from: { opacity: "0", transform: "translateY(6px) scale(0.99)" },
+          to: { opacity: "1", transform: "none" },
         },
+        "slide-in": { from: { transform: "translateX(16px)", opacity: "0" }, to: { transform: "none", opacity: "1" } },
+      },
+      animation: {
+        "fade-in": "fade-in 120ms ease-out",
+        "rise-in": "rise-in 160ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+        "slide-in": "slide-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1)",
       },
     },
   },

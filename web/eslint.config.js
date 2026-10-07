@@ -9,6 +9,11 @@ export default [
   { ignores: ["dist", "../internal/platform/embedweb/dist"] },
   js.configs.recommended,
   {
+    // Plain scripts served as-is (not bundled), e.g. public/theme-init.js.
+    files: ["public/**/*.js"],
+    languageOptions: { sourceType: "script", globals: globals.browser },
+  },
+  {
     files: ["**/*.{ts,tsx}"],
     languageOptions: {
       parser: tsparser,

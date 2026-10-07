@@ -1,54 +1,40 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
 export type Theme = "light" | "dark";
 
 const STORAGE_KEY = "dockvista-theme";
+const CHANGE_EVENT = "dockvista-theme-change";
 
-function systemPrefersDark(): boolean {
-  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+function current(): Theme {
+  return document.documentElement.classList.contains("dark") ? "dark" : "light";
 }
 
-function readStoredTheme(): Theme | null {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored === "dark" || stored === "light" ? stored : null;
-  } catch {
-    return null;
-  }
-}
-
-function applyTheme(theme: Theme) {
-  document.documentElement.classList.toggle("dark", theme === "dark");
+function subscribe(onChange: () => void) {
+  window.addEventListener(CHANGE_EVENT, onChange);
+  return () => window.removeEventListener(CHANGE_EVENT, onChange);
 }
 
 /**
- * Reads/writes the light-dark preference, persisted to localStorage and
- * applied as a `.dark` class on <html> (see tailwind.config.js darkMode:
- * "class"). index.html applies the stored/system preference synchronously
- * before React mounts to avoid a flash of the wrong theme; this hook keeps
- * that in sync afterward.
+ * Reads/writes the light-dark preference. The source of truth is the
+ * `.dark` class on <html> (set before first paint by public/theme-init.js),
+ * so every component using this hook stays in sync.
  */
 export function useTheme() {
-  const [theme, setThemeState] = useState<Theme>(
-    () => readStoredTheme() ?? (systemPrefersDark() ? "dark" : "light"),
-  );
-
-  useEffect(() => {
-    applyTheme(theme);
-  }, [theme]);
+  const theme = useSyncExternalStore(subscribe, current);
 
   const setTheme = useCallback((next: Theme) => {
-    setThemeState(next);
+    document.documentElement.classList.toggle("dark", next === "dark");
     try {
       localStorage.setItem(STORAGE_KEY, next);
     } catch {
       /* localStorage unavailable — theme still applies for this session. */
     }
+    window.dispatchEvent(new Event(CHANGE_EVENT));
   }, []);
 
   const toggle = useCallback(() => {
-    setTheme(theme === "dark" ? "light" : "dark");
-  }, [theme, setTheme]);
+    setTheme(current() === "dark" ? "light" : "dark");
+  }, [setTheme]);
 
   return { theme, setTheme, toggle };
 }

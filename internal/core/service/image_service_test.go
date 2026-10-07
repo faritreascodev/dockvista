@@ -28,8 +28,12 @@ func (f *fakeImageClient) RemoveImage(ctx context.Context, id string, force bool
 	return f.removeErr
 }
 
-func (f *fakeImageClient) PullImage(ctx context.Context, ref string) (io.ReadCloser, error) {
+func (f *fakeImageClient) PullImage(ctx context.Context, ref, registryAuth string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader(`{"status":"pulling"}` + "\n")), nil
+}
+
+func (f *fakeImageClient) ImageHistory(ctx context.Context, id string) ([]domain.ImageLayer, error) {
+	return []domain.ImageLayer{{ID: id, CreatedBy: "FROM scratch"}}, nil
 }
 
 func (f *fakeImageClient) PruneImages(ctx context.Context) (int, uint64, error) {

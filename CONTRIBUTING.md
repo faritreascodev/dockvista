@@ -9,7 +9,7 @@ PRs over large ones — easier to review, easier to revert if needed.
 git clone https://github.com/faritreascodev/dockvista.git
 cd dockvista
 make tidy   # go mod tidy + npm install
-make dev    # API on :8080, Vite dev server with hot reload
+make dev    # API on 127.0.0.1:8080, Vite dev server with hot reload
 ```
 
 You'll need a reachable Docker daemon (the default local socket works out
@@ -33,6 +33,15 @@ Read the *Architecture* section of [README.md](README.md) first. In short:
 - Frontend types in `web/src/types/domain.ts` must stay in sync with the
   Go DTOs in `internal/adapters/httpapi/dto.go` — there's no code
   generation between them yet, so update both by hand.
+- UI colors come from the semantic tokens in `web/src/index.css`
+  (`canvas`, `panel`, `ink`, `edge`, `accent`, `ok`/`warn`/`bad`/`info`), not
+  raw Tailwind palette classes, so both themes and every accent keep working.
+- No inline `<script>` or `on*=` handlers: the CSP blocks them. Put
+  pre-render code in `web/public/` and load it with `<script src>`.
+- A new state-changing route must be wrapped in `mutating(...)` (or
+  `freesDisk(...)` if it changes disk usage) in `router.go`, so it is
+  rate-limited and refused in read-only mode. Add it to the `blocked` table
+  in `TestRouter_ReadOnlyBlocksWritesAndShell` too.
 
 ## Before opening a PR
 
@@ -42,7 +51,14 @@ make test
 make build   # confirms the frontend embeds and the binary still compiles
 ```
 
-All three must pass; CI runs the same checks.
+All three must pass; CI runs the same checks, plus `govulncheck`, which fails
+on any reachable vulnerability not explicitly allowlisted in `ci.yml`.
+
+## Releasing
+
+Push a semver tag (`git tag v1.2.0 && git push origin v1.2.0`). The Release
+workflow builds all six platform binaries, writes `SHA256SUMS`, and publishes
+a GitHub release with generated notes.
 
 ## Commit style
 

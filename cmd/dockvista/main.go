@@ -9,18 +9,17 @@ import (
 	"encoding/hex"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
+	"dockvista/internal/adapters/audit"
 	"dockvista/internal/adapters/authstore"
-	"dockvista/internal/adapters/broker"
-	dockeradapter "dockvista/internal/adapters/docker"
+	"dockvista/internal/adapters/enginehub"
 	"dockvista/internal/adapters/httpapi"
-	"dockvista/internal/adapters/store"
 	"dockvista/internal/config"
 	"dockvista/internal/core/domain"
 	"dockvista/internal/core/service"
@@ -28,6 +27,7 @@ import (
 )
 
 func main() {
+	maybeReadyz()
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	if err := run(log); err != nil {
@@ -44,17 +44,16 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	dockerClient, err := dockeradapter.New()
+	hub, err := enginehub.Start(ctx, cfg.DataDir, cfg.PollInterval, log)
 	if err != nil {
 		return err
 	}
-	defer dockerClient.Close()
+	defer hub.Close()
 
-	svc := service.New(dockerClient, store.New(), log)
-	go svc.RunCollector(ctx, cfg.PollInterval)
-
-	eventBroker := broker.New[domain.Event]()
-	go bridgeDockerEvents(ctx, dockerClient, svc, eventBroker, log)
+	local, err := hub.Resolve(ctx, domain.LocalEnvironmentID)
+	if err != nil {
+		return err
+	}
 
 	credStore, err := authstore.New(cfg.DataDir)
 	if err != nil {
@@ -77,16 +76,36 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	authSvc := service.NewAuthService(credStore, sessionSecret, setupToken)
-	imageSvc := service.NewImageService(dockerClient)
-	volumeSvc := service.NewVolumeService(dockerClient)
-	networkSvc := service.NewNetworkService(dockerClient)
+	authSvc.ConfigureSessions(cfg.IdleTimeout, 0)
+
+	auditLog, err := audit.New(cfg.DataDir, log)
+	if err != nil {
+		return err
+	}
 
 	staticHandler, err := embedweb.Handler()
 	if err != nil {
 		return err
 	}
 
-	router := httpapi.NewRouter(svc, authSvc, eventBroker, imageSvc, volumeSvc, networkSvc, staticHandler, log, cfg.CookieSecure)
+	warnIfExposed(log, cfg)
+
+	router := httpapi.NewRouter(httpapi.Services{
+		Containers: local.Containers,
+		Auth:       authSvc,
+		Events:     local.Events,
+		Images:     local.Images,
+		Volumes:    local.Volumes,
+		Networks:   local.Networks,
+		System:     hub.LocalSystem(),
+		Storage:    local.Storage,
+		Engines:    hub,
+		Registries: hub.Registries(),
+	}, staticHandler, log, httpapi.Options{
+		CookieSecure: cfg.CookieSecure,
+		ReadOnly:     cfg.ReadOnly,
+		Audit:        auditLog,
+	})
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           router,
@@ -124,70 +143,30 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-// bridgeDockerEvents forwards the daemon's own event stream onto the SSE
-// broker and, for container events, triggers an immediate cache refresh so
-// the UI reflects a change (e.g. `docker stop` run from another terminal)
-// within about a second instead of waiting for RunCollector's next tick.
-// Reconnects on a short fixed delay if the stream drops — a daemon restart
-// shouldn't permanently degrade the app back to poll-only.
-func bridgeDockerEvents(ctx context.Context, docker *dockeradapter.Client, svc *service.ContainerService, b *broker.Broker[domain.Event], log *slog.Logger) {
-	signal := newRefreshSignal()
-	go runCoalescedRefresh(ctx, svc, signal, log)
-
-	for ctx.Err() == nil {
-		runEventStream(ctx, docker, signal, b, log)
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(2 * time.Second):
-		}
+// warnIfExposed logs once at startup when the server is reachable from other
+// machines over plain HTTP. The address is the operator's call; the warning
+// is there so it is never an accident.
+func warnIfExposed(log *slog.Logger, cfg config.Config) {
+	if cfg.ReadOnly {
+		log.Info("read-only mode: container changes, pulls, prunes, and the terminal are disabled")
 	}
-}
-
-// refreshSignal is a coalescing doorbell. Nudge never blocks the caller and
-// never queues more than one pending refresh.
-type refreshSignal struct {
-	ch chan struct{}
-}
-
-func newRefreshSignal() *refreshSignal {
-	return &refreshSignal{ch: make(chan struct{}, 1)}
-}
-
-func (s *refreshSignal) Nudge() {
-	select {
-	case s.ch <- struct{}{}:
-	default:
+	if isLoopbackAddr(cfg.Addr) || cfg.CookieSecure {
+		return
 	}
+	log.Warn("listening beyond loopback without DOCKVISTA_COOKIE_SECURE; the session cookie crosses the network in clear text. Put TLS in front, or set DOCKVISTA_ADDR=127.0.0.1:8080",
+		"addr", cfg.Addr)
 }
 
-// runCoalescedRefresh turns a burst of daemon events into one container
-// list. The event reader only publishes and nudges; it does not call the
-// daemon itself.
-func runCoalescedRefresh(ctx context.Context, svc *service.ContainerService, signal *refreshSignal, log *slog.Logger) {
-	const debounce = 200 * time.Millisecond
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-signal.ch:
-			timer := time.NewTimer(debounce)
-		drain:
-			for {
-				select {
-				case <-ctx.Done():
-					timer.Stop()
-					return
-				case <-signal.ch:
-				case <-timer.C:
-					break drain
-				}
-			}
-			if err := svc.RefreshOnce(ctx); err != nil && ctx.Err() == nil {
-				log.Warn("event-triggered container refresh failed", "error", err)
-			}
-		}
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
 	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func newSetupToken() (string, error) {
@@ -196,47 +175,4 @@ func newSetupToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
-}
-
-// containerListActions are the container-event actions that actually change
-// what ListContainers returns. Docker also reports exec_create/exec_start/
-// exec_die for every health-check probe (frequently, once per container per
-// probe interval) and attach/detach/resize/top for other tooling; treating
-// those as "the list changed" would hammer the daemon and the frontend with
-// a refresh several times a second on a fleet of any size.
-var containerListActions = map[string]bool{
-	"create": true, "start": true, "stop": true, "die": true, "destroy": true,
-	"pause": true, "unpause": true, "restart": true, "rename": true, "kill": true,
-	"update": true,
-}
-
-// isHealthStatusAction matches Docker's "health_status: healthy" /
-// "health_status: unhealthy" / "health_status: running" action strings —
-// infrequent (only on an actual state transition, not per-probe) and worth
-// refreshing for, since it changes the human-readable status text.
-func isHealthStatusAction(action string) bool {
-	return strings.HasPrefix(action, "health_status")
-}
-
-func runEventStream(ctx context.Context, docker *dockeradapter.Client, signal *refreshSignal, b *broker.Broker[domain.Event], log *slog.Logger) {
-	events, errs := docker.Events(ctx)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case evt, ok := <-events:
-			if !ok {
-				return
-			}
-			b.Publish(evt)
-			if evt.Type == "container" && (containerListActions[evt.Action] || isHealthStatusAction(evt.Action)) {
-				signal.Nudge()
-			}
-		case err, ok := <-errs:
-			if ok && err != nil {
-				log.Warn("docker event stream disconnected, retrying", "error", err)
-			}
-			return
-		}
-	}
 }

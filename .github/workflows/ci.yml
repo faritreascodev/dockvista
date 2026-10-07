@@ -36,15 +36,34 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./cmd/... ./internal/... ./pkg/...
       - run: go test ./cmd/... ./internal/... ./pkg/... -race -cover
+      - name: Compile Windows tray (no CGO)
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+        run: go build -o /dev/null ./cmd/dockvista-tray
       # Pinned so a new upstream release cannot change what this job checks
       # without a commit here.
       - run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
       - name: Vulnerability scan
-        # Two Moby findings (GO-2026-4887, GO-2026-4883) have no upstream fix
-        # yet. The scan still runs so the report is visible; it does not fail
-        # the job until those are patched in github.com/docker/docker.
-        continue-on-error: true
-        run: govulncheck ./cmd/... ./internal/... ./pkg/...
+        # GO-2026-4887 and GO-2026-4883 are Moby findings with no upstream fix
+        # yet; they are allowlisted by ID so any *other* reachable
+        # vulnerability still fails the job. Drop an ID from ALLOW once
+        # github.com/docker/docker ships the patch.
+        env:
+          ALLOW: '["GO-2026-4883","GO-2026-4887"]'
+        run: |
+          govulncheck ./cmd/... ./internal/... ./pkg/... || true
+          govulncheck -format json ./cmd/... ./internal/... ./pkg/... > vuln.json
+          # A finding is reachable when its trace bottoms out in a function,
+          # not just a module or package import.
+          blocking=$(jq -rs --argjson allow "$ALLOW" '
+            [ .[] | .finding? | select(. != null and .trace[0].function != null) | .osv ]
+            | unique | map(select(. as $id | $allow | index($id) | not)) | .[]' vuln.json)
+          if [ -n "$blocking" ]; then
+            echo "::error::Reachable vulnerabilities not in the allowlist: $blocking"
+            exit 1
+          fi
 
   frontend:
     name: Lint & typecheck (frontend)

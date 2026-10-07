@@ -47,6 +47,12 @@ func isValidProtocol(proto string) bool {
 	return proto == "tcp" || proto == "udp"
 }
 
+var validSincePattern = regexp.MustCompile(`^([0-9]{1,12}|[0-9]{1,6}[smhd]|[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.+-]+)$`)
+
+func isValidSince(since string) bool {
+	return since == "" || validSincePattern.MatchString(since)
+}
+
 func isValidRestartPolicy(policy string) bool {
 	switch policy {
 	case "no", "always", "on-failure", "unless-stopped":

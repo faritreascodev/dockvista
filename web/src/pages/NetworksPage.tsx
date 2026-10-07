@@ -1,22 +1,30 @@
 import { useMemo, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Eraser, Network, Plus } from "lucide-react";
 import { ApiError, createNetwork, pruneNetworks, removeNetwork } from "../api/client";
-import { Button } from "../components/ui/Button";
-import { ConfirmDialog } from "../components/ui/ConfirmDialog";
-import { Modal } from "../components/ui/Modal";
-import { useToast } from "../components/ui/toastContext";
 import { EmptyState } from "../components/EmptyState";
 import { ErrorBanner } from "../components/ErrorBanner";
+import { PageHeader } from "../components/PageHeader";
 import { TableSkeleton } from "../components/Skeleton";
+import { Button } from "../components/ui/Button";
+import { ConfirmDialog } from "../components/ui/ConfirmDialog";
+import { FieldLabel, FormError } from "../components/ui/Form";
+import { Modal } from "../components/ui/Modal";
+import { Chip, DataTable, RemoveButton, TableFrame } from "../components/ui/Table";
+import { useToast } from "../components/ui/toastContext";
 import { useNetworks } from "../hooks/useNetworks";
 import { useSearch } from "../hooks/useSearch";
+import { useSession } from "../hooks/useSession";
 import type { DockerNetwork } from "../types/domain";
 import { formatRelativeTime, shortId } from "../utils/format";
+
+const BUILTIN = new Set(["bridge", "host", "none"]);
 
 export function NetworksPage() {
   const { data: networks, error, loading } = useNetworks();
   const { query } = useSearch();
+  const { readOnly } = useSession();
   const [createOpen, setCreateOpen] = useState(false);
+  const [pruneOpen, setPruneOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<DockerNetwork>();
   const toast = useToast();
 
@@ -26,34 +34,25 @@ export function NetworksPage() {
     return networks?.filter((n) => n.name.toLowerCase().includes(q));
   }, [networks, query]);
 
-  const handlePrune = async () => {
-    try {
-      const result = await pruneNetworks();
-      toast.push(
-        "success",
-        result.deleted === 0 ? "Nothing to prune." : `Removed ${result.deleted} network${result.deleted === 1 ? "" : "s"}.`,
-      );
-    } catch (err) {
-      toast.push("error", err instanceof ApiError ? err.message : "Prune failed.");
-    }
-  };
-
   return (
-    <main className="flex-1 overflow-y-auto px-6 py-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-ink">Networks</h1>
-          <p className="mt-1 text-sm text-ink-muted">Bridge, overlay and custom Docker networks.</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="secondary" onClick={handlePrune}>
-            Prune unused
-          </Button>
-          <Button variant="primary" onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4" /> Create network
-          </Button>
-        </div>
-      </div>
+    <main className="flex-1 overflow-y-auto px-4 py-6 md:px-8">
+      <PageHeader
+        kicker="Resources"
+        title="Networks"
+        description="Bridge, overlay, and custom networks, with the containers attached to each."
+        actions={
+          !readOnly && (
+            <>
+              <Button onClick={() => setPruneOpen(true)}>
+                <Eraser className="h-4 w-4" /> Prune unused
+              </Button>
+              <Button variant="primary" onClick={() => setCreateOpen(true)}>
+                <Plus className="h-4 w-4" /> Create network
+              </Button>
+            </>
+          )
+        }
+      />
 
       {error && (
         <div className="mt-5">
@@ -61,55 +60,75 @@ export function NetworksPage() {
         </div>
       )}
 
-      <div className="mt-5 overflow-x-auto rounded-xl border border-edge bg-panel">
-        {loading && !networks ? (
-          <TableSkeleton />
-        ) : !filtered || filtered.length === 0 ? (
-          <EmptyState message={query ? "No networks match your search." : "No networks found."} />
-        ) : (
-          <table className="w-full min-w-[720px] border-collapse text-left">
-            <thead>
-              <tr className="border-b border-edge bg-panel-2 text-xs uppercase tracking-wide text-ink-muted">
-                <th className="py-2.5 pl-4 font-medium">Name</th>
-                <th className="py-2.5 font-medium">Driver</th>
-                <th className="py-2.5 font-medium">Scope</th>
-                <th className="py-2.5 font-medium">Containers</th>
-                <th className="py-2.5 font-medium">Created</th>
-                <th className="py-2.5 pr-4 text-right font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-edge">
+      <div className="mt-6">
+        <TableFrame>
+          {loading && !networks ? (
+            <TableSkeleton />
+          ) : !filtered || filtered.length === 0 ? (
+            <EmptyState icon={Network} message={query ? "No networks match your filter." : "No networks found."} />
+          ) : (
+            <DataTable columns={["Name", "Driver", "Scope", "Attached", "Created", ""]}>
               {filtered.map((n) => {
-                const isBuiltin = ["bridge", "host", "none"].includes(n.name);
+                const isBuiltin = BUILTIN.has(n.name);
+                const attached = Object.values(n.containers ?? {});
                 return (
-                  <tr key={n.id} className="text-sm">
-                    <td className="py-3 pl-4 text-ink">
-                      {n.name}
-                      <span className="ml-1.5 font-mono text-xs text-ink-faint">{shortId(n.id)}</span>
+                  <tr key={n.id} className="transition-colors hover:bg-panel-2/60">
+                    <td className="py-3 pl-4 pr-4">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-ink">{n.name}</span>
+                        {isBuiltin && <Chip>built-in</Chip>}
+                        {n.internal && <Chip tone="warn">internal</Chip>}
+                      </div>
+                      <p className="font-mono text-[11px] text-ink-faint">{shortId(n.id)}</p>
                     </td>
-                    <td className="py-3 text-ink-muted">{n.driver}</td>
-                    <td className="py-3 text-ink-muted">{n.scope}</td>
-                    <td className="py-3 text-ink-muted">{Object.keys(n.containers ?? {}).length}</td>
-                    <td className="py-3 text-ink-muted">{formatRelativeTime(n.createdAt)}</td>
+                    <td className="py-3 pr-4">
+                      <Chip tone={n.driver === "bridge" ? "muted" : "accent"}>{n.driver}</Chip>
+                    </td>
+                    <td className="py-3 pr-4 font-mono text-xs text-ink-muted">{n.scope}</td>
+                    <td className="max-w-[260px] py-3 pr-4">
+                      {attached.length === 0 ? (
+                        <span className="font-mono text-xs text-ink-faint">—</span>
+                      ) : (
+                        <span className="block truncate text-xs text-ink-muted" title={attached.join(", ")}>
+                          <span className="font-mono text-ink">{attached.length}</span> · {attached.join(", ")}
+                        </span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap py-3 pr-4 text-xs text-ink-muted">{formatRelativeTime(n.createdAt)}</td>
                     <td className="py-3 pr-4 text-right">
-                      <button
-                        onClick={() => setRemoveTarget(n)}
-                        disabled={isBuiltin}
-                        title={isBuiltin ? "Built-in networks can't be removed" : "Remove network"}
-                        className="rounded p-1.5 text-ink-muted transition hover:bg-rose-100 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-ink-muted dark:hover:bg-rose-950/50 dark:hover:text-rose-400"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      {!readOnly && (
+                        <RemoveButton
+                          onClick={() => setRemoveTarget(n)}
+                          disabled={isBuiltin}
+                          title={isBuiltin ? "Built-in networks can't be removed" : "Remove network"}
+                        />
+                      )}
                     </td>
                   </tr>
                 );
               })}
-            </tbody>
-          </table>
-        )}
+            </DataTable>
+          )}
+        </TableFrame>
       </div>
 
       {createOpen && <CreateNetworkModal onClose={() => setCreateOpen(false)} />}
+
+      {pruneOpen && (
+        <ConfirmDialog
+          title="Prune unused networks"
+          description="Removes every custom network with no containers attached. Built-in networks are never touched."
+          confirmLabel="Prune"
+          onConfirm={async () => {
+            const result = await pruneNetworks();
+            toast.push(
+              "success",
+              result.deleted === 0 ? "Nothing to prune." : `Removed ${result.deleted} network${result.deleted === 1 ? "" : "s"}.`,
+            );
+          }}
+          onClose={() => setPruneOpen(false)}
+        />
+      )}
 
       {removeTarget && (
         <ConfirmDialog
@@ -158,24 +177,21 @@ function CreateNetworkModal({ onClose }: { onClose: () => void }) {
         </>
       }
     >
-      <label className="mb-1 block text-xs font-medium text-ink-muted" htmlFor="network-name">
-        Name
-      </label>
+      <FieldLabel htmlFor="network-name">Name</FieldLabel>
       <input
         id="network-name"
         type="text"
+        autoFocus
         placeholder="my-network"
         value={name}
         disabled={busy}
         onChange={(e) => setName(e.target.value)}
-        className="w-full rounded-lg border border-edge bg-panel-2 px-3 py-2 text-sm text-ink outline-none focus:border-accent disabled:opacity-60"
+        className="field font-mono"
       />
-      <p className="mt-1 text-xs text-ink-faint">Driver: bridge (default).</p>
-      {error && (
-        <div className="mt-3 rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
-          {error}
-        </div>
-      )}
+      <p className="mt-2 text-xs text-ink-faint">
+        Driver: <span className="font-mono">bridge</span>
+      </p>
+      {error && <FormError>{error}</FormError>}
     </Modal>
   );
 }

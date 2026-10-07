@@ -13,6 +13,28 @@ export function formatPercent(value: number): string {
   return `${value.toFixed(1)}%`;
 }
 
+export function formatBytesPerSec(bytesPerSec: number): string {
+  return `${formatBytes(Math.max(0, bytesPerSec))}/s`;
+}
+
+/** Docker Desktop on Windows bind-mounts the host through WSL paths. */
+export function isDesktopHostPath(source: string): boolean {
+  const s = source.toLowerCase();
+  return (
+    s.includes("/run/desktop/") ||
+    s.includes("/host_mnt/") ||
+    s.includes("docker_data") ||
+    /^[a-z]:[\\/]/.test(source)
+  );
+}
+
+export function formatRelativeIso(iso?: string): string {
+  if (!iso) return "—";
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return "—";
+  return formatRelativeTime(ms / 1000);
+}
+
 export function formatRelativeTime(unixSeconds: number): string {
   const deltaMs = Date.now() - unixSeconds * 1000;
   const deltaSec = Math.max(0, Math.round(deltaMs / 1000));
