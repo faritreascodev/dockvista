@@ -16,7 +16,7 @@ These are the product, not polish. New work should strengthen them, not sand the
 
 ## Now (this slice)
 
-Git into the stack workspace is shipped. Next is **Swarm**. Do not skip it for CVE summaries or other extras.
+Git into the stack workspace is shipped. Swarm inventory (nodes + services) is next; init/join/scale stay after that view is honest.
 
 ## Next
 
@@ -63,7 +63,8 @@ Today Compose still groups containers by `com.docker.compose.project`.
 
 ### 6. Swarm
 
-Services, stacks, nodes, overlay networks. Only after environments exist. A single Docker Desktop on Windows is the wrong place to debut this.
+- [x] Read inventory: cluster state, nodes, and services. An engine that is not in Swarm mode shows that instead of an empty fake cluster.
+- Init, join, scale, and swarm stacks. Overlay networks already list under Networks. A single Docker Desktop on Windows is the wrong place to debut mutating Swarm.
 
 ### 7. Extra Docker that is worth it
 

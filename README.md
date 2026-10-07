@@ -35,6 +35,8 @@ a React/TypeScript frontend, shipped as a single binary.
   workspace DockVista owns, then `up`/`down` through the Docker API (no host
   homedir, no `build:`, no SSH remotes). Existing containers are still grouped
   by `com.docker.compose.project` with stack-wide start/stop.
+- **Swarm** — nodes and services of the active engine. An engine that is not
+  in Swarm mode says so; init/join/scale are not in this release.
 - **Environments** — Local plus named TCP+TLS daemons. One environment is one
   engine; the sidebar switches the cookie. SSH is not in this release.
 - **Read-only mode** — `DOCKVISTA_READ_ONLY=true` turns the instance into a
@@ -290,8 +292,9 @@ Implemented:
 - [x] CSRF Origin check, login lockout, idle sessions, `audit.log`
 - [x] GHCR image, `/readyz`, TLS compose overlay, Windows tray launcher
 - [x] Named environments (local + TCP+TLS), workspace Compose up/down, https git stacks, image history, volume browse, private registries
+- [x] Swarm inventory (nodes + services; inactive engines say so)
 
-The rest of the backlog (Swarm) lives in
+The rest of the backlog (Swarm init/join/scale) lives in
 [docs/ROADMAP.md](docs/ROADMAP.md). That file is the one source of truth
 for what we will and will not take on.
 

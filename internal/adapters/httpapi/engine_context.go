@@ -20,6 +20,7 @@ type BoundEngine struct {
 	Storage    storageService
 	Events     eventSubscriber
 	Stacks     stackService
+	Swarm      swarmService
 }
 
 type EngineResolver interface {

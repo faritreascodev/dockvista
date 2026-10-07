@@ -12,7 +12,7 @@ import { CommandPalette } from "./CommandPalette";
 import { Logo } from "./Logo";
 
 // Pages whose lists are filtered by the header search box.
-const FILTERABLE = ["/containers", "/compose", "/images", "/volumes", "/networks", "/storage"];
+const FILTERABLE = ["/containers", "/compose", "/swarm", "/images", "/volumes", "/networks", "/storage"];
 
 interface ShellProps {
   onLogout: () => void;

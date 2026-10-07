@@ -18,6 +18,7 @@ import type {
   SystemInfo,
   Environment,
   Stack,
+  SwarmSnapshot,
   Registry,
   ImageLayer,
 } from "../types/domain";
@@ -167,6 +168,10 @@ export function setUserRole(username: string, role: UserRole): Promise<void> {
 
 export function getEngine(): Promise<EngineInfo> {
   return request<EngineInfo>("/api/engine");
+}
+
+export function getSwarm(): Promise<SwarmSnapshot> {
+  return request<SwarmSnapshot>("/api/swarm");
 }
 
 export function getSystemInfo(): Promise<SystemInfo> {

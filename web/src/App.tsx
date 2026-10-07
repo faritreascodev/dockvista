@@ -18,6 +18,7 @@ import { NetworksPage } from "./pages/NetworksPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { StoragePage } from "./pages/StoragePage";
+import { SwarmPage } from "./pages/SwarmPage";
 import { VolumesPage } from "./pages/VolumesPage";
 
 function inviteTokenFromLocation(): string | null {
@@ -95,6 +96,7 @@ export default function App() {
                     <Route path="/networks" element={<NetworksPage />} />
                     <Route path="/storage" element={<StoragePage />} />
                     <Route path="/compose" element={<ComposePage />} />
+                    <Route path="/swarm" element={<SwarmPage />} />
                     <Route path="/settings" element={<SettingsPage />} />
                     <Route path="*" element={<Navigate to="/overview" replace />} />
                   </Route>

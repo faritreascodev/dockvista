@@ -30,6 +30,7 @@ type runtime struct {
 	system     *service.SystemService
 	storage    *service.StorageService
 	stacks     *service.StackService
+	swarm      *service.SwarmService
 	events     *broker.Broker[domain.Event]
 	cancel     context.CancelFunc
 }
@@ -131,6 +132,7 @@ func (h *Hub) Resolve(_ context.Context, id string) (httpapi.BoundEngine, error)
 		Storage:    rt.storage,
 		Events:     rt.events,
 		Stacks:     rt.stacks,
+		Swarm:      rt.swarm,
 	}, nil
 }
 
@@ -243,6 +245,7 @@ func (h *Hub) attach(meta domain.Environment, cli *dockeradapter.Client) {
 		system:     sys,
 		storage:    service.NewStorageService(cli, sys.InvalidateDiskUsage),
 		stacks:     stacks,
+		swarm:      service.NewSwarmService(cli),
 		events:     events,
 		cancel:     cancel,
 	}

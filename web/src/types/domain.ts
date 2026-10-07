@@ -180,6 +180,39 @@ export interface Stack {
   updatedAt: number;
 }
 
+export interface SwarmNode {
+  id: string;
+  hostname: string;
+  role: string;
+  availability: string;
+  status: string;
+  addr?: string;
+  engineVersion?: string;
+  manager: boolean;
+  leader: boolean;
+}
+
+export interface SwarmService {
+  id: string;
+  name: string;
+  image: string;
+  mode: string;
+  replicas: number;
+  running: number;
+  ports?: string[];
+}
+
+export interface SwarmSnapshot {
+  state: string;
+  controlAvailable: boolean;
+  nodeId?: string;
+  nodeAddr?: string;
+  clusterId?: string;
+  error?: string;
+  nodes: SwarmNode[];
+  services: SwarmService[];
+}
+
 export interface Registry {
   id: string;
   host: string;

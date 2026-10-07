@@ -1,4 +1,4 @@
-import { Boxes, Gauge, HardDrive, Image as ImageIcon, Layers, Network, Trash2 } from "lucide-react";
+import { Boxes, Gauge, HardDrive, Hexagon, Image as ImageIcon, Layers, Network, Trash2 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 export interface NavItem {
@@ -14,6 +14,7 @@ export const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
     items: [
       { label: "Containers", path: "/containers", icon: Boxes },
       { label: "Compose", path: "/compose", icon: Layers },
+      { label: "Swarm", path: "/swarm", icon: Hexagon },
     ],
   },
   {
